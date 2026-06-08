@@ -1,0 +1,684 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Comptage GPS">
+<title>Comptage vigne GPS</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+
+<style>
+* { box-sizing: border-box; }
+body {
+  margin:0;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+  background:#f6f7f8;
+  color:#111827;
+  padding:12px;
+  padding-bottom:28px;
+}
+h1 { text-align:center; font-size:23px; margin:6px 0 10px; }
+.card,.counter {
+  background:#fff;
+  border:1px solid #d1d5db;
+  border-radius:18px;
+  padding:12px;
+  margin-bottom:12px;
+  box-shadow:0 1px 4px rgba(0,0,0,.06);
+}
+label { display:block; font-weight:800; margin-bottom:6px; font-size:15px; }
+select,input,textarea {
+  width:100%;
+  font-size:17px;
+  padding:12px;
+  border:1px solid #d1d5db;
+  border-radius:14px;
+  background:#fff;
+}
+textarea { min-height:62px; resize:vertical; }
+.small { color:#6b7280; font-size:13px; margin-top:6px; line-height:1.35; }
+.status {
+  padding:10px;
+  border-radius:14px;
+  background:#f3f4f6;
+  font-size:14px;
+  font-weight:700;
+  line-height:1.35;
+}
+.status.ok { background:#dcfce7; color:#14532d; }
+.status.warn { background:#fef3c7; color:#78350f; }
+.status.err { background:#fee2e2; color:#7f1d1d; }
+
+#map {
+  height: 42vh;
+  min-height:310px;
+  width:100%;
+  border-radius:18px;
+  border:1px solid #d1d5db;
+  overflow:hidden;
+}
+.map-actions { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px; }
+button {
+  border:0;
+  border-radius:16px;
+  font-size:18px;
+  font-weight:900;
+  min-height:58px;
+  background:#111827;
+  color:white;
+  touch-action:manipulation;
+}
+button.secondary { background:#4b5563; }
+button.save { background:#1d4ed8; }
+button.export { background:#166534; }
+button.reset { background:#b91c1c; }
+button.info { background:#0369a1; }
+button.minus { background:#374151; font-size:30px; }
+button.plus { font-size:30px; }
+
+.counter-title { font-weight:900; font-size:18px; margin-bottom:9px; display:flex; align-items:center; gap:8px; }
+.dot { width:14px; height:14px; border-radius:50%; display:inline-block; border:1px solid rgba(0,0,0,.2); }
+.counter-row { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; align-items:center; }
+.value {
+  text-align:center;
+  font-size:38px;
+  font-weight:900;
+  line-height:68px;
+  background:#f3f4f6;
+  border-radius:16px;
+  min-height:68px;
+}
+.grid2 { display:grid; grid-template-columns:1fr; gap:10px; }
+.check-grid { display:grid; grid-template-columns:1fr; gap:7px; }
+.check-item {
+  display:flex; align-items:center; gap:10px;
+  background:#f9fafb; border:1px solid #d1d5db; border-radius:14px; padding:10px; font-weight:800;
+}
+.check-item input { width:22px; height:22px; padding:0; }
+
+.saved-list {
+  max-height:260px;
+  overflow:auto;
+  border:1px solid #d1d5db;
+  border-radius:14px;
+  background:#f9fafb;
+  padding:8px;
+}
+.saved-item {
+  background:#fff;
+  border:1px solid #e5e7eb;
+  border-radius:12px;
+  padding:9px;
+  margin-bottom:8px;
+  font-size:13px;
+}
+.actions {
+  display:grid;
+  grid-template-columns:1fr;
+  gap:10px;
+  position:sticky;
+  bottom:10px;
+  z-index:800;
+}
+.leaflet-popup-content { font-size:14px; }
+@media (min-width:900px) {
+  body { max-width:1180px; margin:auto; }
+  .layout { display:grid; grid-template-columns: 0.95fr 1.05fr; gap:12px; align-items:start; }
+  #map { height: 72vh; min-height:620px; position:sticky; top:10px; }
+  .grid2 { grid-template-columns:1fr 1fr; }
+  .actions { position:static; }
+}
+</style>
+</head>
+<body>
+<h1>Comptage vigne GPS</h1>
+
+<div class="layout">
+  <div>
+    <div class="card">
+      <label for="parcelle">Parcelle comptée</label>
+      <select id="parcelle"></select>
+      <div class="small">La parcelle choisie est prioritaire : tous les points sont rattachés à cette parcelle. Si le GPS tombe à côté, le point est forcé sur son contour.</div>
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <label for="rang">Rang / secteur</label>
+        <input id="rang" type="text" placeholder="Ex : rang 8, zone nord...">
+      </div>
+      <div class="card">
+        <label for="operateur">Opérateur</label>
+        <input id="operateur" type="text" placeholder="Optionnel">
+      </div>
+    </div>
+
+    <div class="card">
+      <label>État GPS</label>
+      <div id="gpsStatus" class="status warn">GPS non activé. Clique sur “Activer GPS”.</div>
+      <div class="map-actions">
+        <button type="button" class="info" onclick="startGpsWatch()">Activer GPS</button>
+        <button type="button" class="secondary" onclick="centerOnSelectedParcel()">Centrer parcelle</button>
+      </div>
+      <div class="small">À chaque clic “+”, l’application enregistre un point géolocalisé. Si le signal est absent, un point de secours est placé au centre de la parcelle avec le statut GPS “erreur”.</div>
+    </div>
+
+    <div class="card">
+      <label>Compteurs à afficher</label>
+      <div id="checks" class="check-grid"></div>
+      <button type="button" class="secondary" onclick="showAllCounters()">Tout afficher</button>
+    </div>
+
+    <div id="counters"></div>
+
+    <div class="card">
+      <label for="commentaire">Commentaire général</label>
+      <textarea id="commentaire" placeholder="Optionnel"></textarea>
+    </div>
+
+    <div class="card">
+      <label>Observations enregistrées</label>
+      <div class="small" id="savedSummary">Aucune observation.</div>
+      <div class="saved-list" id="savedList"></div>
+      <div class="map-actions">
+        <button type="button" class="secondary" onclick="deleteLastObservation()">Supprimer dernier point</button>
+        <button type="button" class="reset" onclick="clearAllObservations()">Tout effacer</button>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button type="button" class="export" onclick="exportCSV()">Exporter CSV points</button>
+      <button type="button" class="export" onclick="exportGeoJSON()">Exporter GeoJSON QGIS</button>
+      <button type="button" class="info" onclick="exportSummaryCSV()">Exporter synthèse parcelle</button>
+    </div>
+  </div>
+
+  <div>
+    <div id="map"></div>
+  </div>
+</div>
+
+<script>
+const PARCELLAIRE = {"type":"FeatureCollection","name":"Parcellaire nom BDD - WGS84","features":[{"type":"Feature","properties":{"fid":1,"NOM":"grande_lande_1","surface":0.23,"cépage":"M","Gamme":"FL","id_parcelle":"grande_lande_1"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7637596,45.1866505],[-0.7637323,45.186674],[-0.7636779,45.1867195],[-0.7635952,45.1867868],[-0.7635389,45.1868306],[-0.763504,45.1868585],[-0.7634435,45.1869027],[-0.7633716,45.1869585],[-0.7633012,45.1870109],[-0.7632165,45.1870755],[-0.7631467,45.18713],[-0.7631351,45.1871399],[-0.7630883,45.1871799],[-0.7630405,45.1872216],[-0.7630084,45.1872529],[-0.7629678,45.1872923],[-0.7629398,45.1873231],[-0.7629136,45.1873538],[-0.762879,45.1873964],[-0.7628165,45.1874821],[-0.7626015,45.1874066],[-0.7626446,45.187345],[-0.7626924,45.1872808],[-0.7627564,45.1872087],[-0.7628285,45.1871326],[-0.7629195,45.1870537],[-0.7630037,45.1869835],[-0.7631152,45.186897],[-0.7632264,45.1868117],[-0.7633618,45.1867085],[-0.7635259,45.1865738],[-0.7637596,45.1866505]]]]}},{"type":"Feature","properties":{"fid":2,"NOM":"pinada_1","surface":0.29,"cépage":"M","Gamme":"PA","id_parcelle":"pinada_1"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7609234,45.1728062],[-0.762063,45.1728183],[-0.7619526,45.1729137],[-0.7618654,45.1729802],[-0.7617857,45.1730224],[-0.761527,45.1731287],[-0.761368,45.1731263],[-0.7613677,45.1731368],[-0.7611222,45.1731332],[-0.7611218,45.1731438],[-0.7608772,45.1731409],[-0.7608757,45.173151],[-0.7606337,45.1731483],[-0.7606329,45.173158],[-0.760569,45.1731554],[-0.760618,45.1728216],[-0.7609186,45.172825],[-0.7609234,45.1728062]]]]}},{"type":"Feature","properties":{"fid":4,"NOM":"socs_1_M","surface":0.18,"cépage":"M","Gamme":"GV","id_parcelle":"socs_1_M"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7431153,45.1764591],[-0.7421286,45.1765353],[-0.7417523,45.1765631],[-0.7417369,45.1765048],[-0.7425178,45.1763384],[-0.7428841,45.1762584],[-0.7430366,45.1762469],[-0.7431153,45.1764591]]]]}},{"type":"Feature","properties":{"fid":5,"NOM":"grand_sablonnet_2_sud","surface":0.33,"cépage":"CS","Gamme":"FL","id_parcelle":"grand_sablonnet_2_sud"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7430671,45.1787951],[-0.7424448,45.1788522],[-0.7422166,45.1788733],[-0.7421878,45.178876],[-0.7421832,45.1788432],[-0.7421284,45.1784507],[-0.7422646,45.1784381],[-0.7430279,45.1783675],[-0.7430671,45.1787951]]]]}},{"type":"Feature","properties":{"fid":6,"NOM":"petit_faure_2_CS_sud","surface":0.77,"cépage":"CS","Gamme":"GV","id_parcelle":"petit_faure_2_CS_sud"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7459501,45.1781127],[-0.7467123,45.1782066],[-0.7465759,45.1792865],[-0.746206,45.1792432],[-0.7457559,45.179183],[-0.7459501,45.1781127]]]]}},{"type":"Feature","properties":{"fid":7,"NOM":"grand_sablonnet_2_collection","surface":1.33,"cépage":"CS","Gamme":"FL","id_parcelle":"grand_sablonnet_2_collection"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7421878,45.178876],[-0.7422166,45.1788733],[-0.7424448,45.1788522],[-0.7430671,45.1787951],[-0.743226,45.1806087],[-0.7424424,45.1806756],[-0.7423041,45.1797189],[-0.7421878,45.178876]]]]}},{"type":"Feature","properties":{"fid":9,"NOM":"grand_sablonnet_1","surface":1.62,"cépage":"CS","Gamme":"FL","id_parcelle":"grand_sablonnet_1"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7441235,45.1782862],[-0.7441625,45.1783023],[-0.7439978,45.1792791],[-0.7439784,45.1794183],[-0.7439642,45.1796555],[-0.7439616,45.1797005],[-0.7440367,45.1805267],[-0.7440242,45.1805455],[-0.7433009,45.1806093],[-0.7430989,45.178362],[-0.7431812,45.1783548],[-0.7435386,45.1783234],[-0.7441235,45.1782862]]]]}},{"type":"Feature","properties":{"fid":10,"NOM":"grand_faure_1","surface":1.6,"cépage":"CS","Gamme":"GV","id_parcelle":"grand_faure_1"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7450962,45.1780462],[-0.7453144,45.1780643],[-0.7458929,45.1781152],[-0.7457519,45.178877],[-0.7456335,45.1795301],[-0.7455237,45.1801103],[-0.7455091,45.1802664],[-0.7455082,45.1804664],[-0.7455038,45.1805745],[-0.7454957,45.180591],[-0.7447914,45.1805619],[-0.7448264,45.1802368],[-0.7449546,45.1792088],[-0.7450887,45.1781108],[-0.7450962,45.1780462]]]]}},{"type":"Feature","properties":{"fid":11,"NOM":"socs_3","surface":0.25,"cépage":"CS","Gamme":"GV","id_parcelle":"socs_3"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7424876,45.1748217],[-0.7425342,45.1749406],[-0.7426056,45.1751273],[-0.7425918,45.1751538],[-0.7420945,45.1752537],[-0.7418244,45.1753065],[-0.7416701,45.1753358],[-0.7414502,45.1753776],[-0.7414435,45.1753445],[-0.7414788,45.1752904],[-0.7417394,45.1750905],[-0.7423011,45.1748563],[-0.7424876,45.1748217]]]]}},{"type":"Feature","properties":{"fid":12,"NOM":"petit_sablonnet","surface":2.5,"cépage":"CS","Gamme":"FL","id_parcelle":"petit_sablonnet"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7408903,45.179764],[-0.7422395,45.1797493],[-0.7423709,45.1807014],[-0.741534,45.1807094],[-0.7408903,45.179764]]]]}},{"type":"Feature","properties":{"fid":13,"NOM":"prairie_M","surface":0.19,"cépage":"M","Gamme":"FL","id_parcelle":"prairie_M"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7410455,45.177901],[-0.7416203,45.1778321],[-0.741515,45.1781684],[-0.7414683,45.1783147],[-0.7414418,45.1784221],[-0.7414174,45.1784756],[-0.7409139,45.1785359],[-0.7408974,45.1785098],[-0.7408911,45.1784758],[-0.7410455,45.177901]]]]}},{"type":"Feature","properties":{"fid":14,"NOM":"canterane","surface":1.53,"cépage":"M","Gamme":"FL","id_parcelle":"canterane"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7440309,45.1806009],[-0.744053,45.1808455],[-0.7440841,45.1812297],[-0.7441062,45.1814931],[-0.7429459,45.181485],[-0.7428548,45.181473],[-0.7427792,45.181456],[-0.742543,45.1814029],[-0.7417372,45.1812127],[-0.7416707,45.1811577],[-0.7416565,45.1811319],[-0.7416389,45.1810856],[-0.741579,45.1808198],[-0.7415743,45.1807569],[-0.7415951,45.1807565],[-0.7420988,45.1807492],[-0.7423744,45.1807438],[-0.7424813,45.1807343],[-0.7431367,45.1806695],[-0.7440309,45.1806009]]]]}},{"type":"Feature","properties":{"fid":15,"NOM":"juillac_2_CS","surface":0.41,"cépage":"CS","Gamme":"GV","id_parcelle":"juillac_2_CS"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7478853,45.1736018],[-0.7469959,45.1737879],[-0.7463856,45.1739146],[-0.7463633,45.173843],[-0.7463403,45.1737807],[-0.7472858,45.1733512],[-0.7477296,45.1731539],[-0.7478853,45.1736018]]]]}},{"type":"Feature","properties":{"fid":16,"NOM":"garennes_2","surface":0.43,"cépage":"CS","Gamme":"GV","id_parcelle":"garennes_2"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7436316,45.1745445],[-0.7447113,45.1743156],[-0.7449402,45.1747578],[-0.7442185,45.1748961],[-0.7442066,45.1748664],[-0.7441443,45.1748782],[-0.7441561,45.174908],[-0.7438218,45.174972],[-0.7436316,45.1745445]]]]}},{"type":"Feature","properties":{"fid":17,"NOM":"chataigniers","surface":0.34,"cépage":"CS","Gamme":"GV","id_parcelle":"chataigniers"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7452197,45.1774955],[-0.7455097,45.1775148],[-0.745997,45.1775468],[-0.7459024,45.1780537],[-0.7453342,45.1780092],[-0.745161,45.177995],[-0.7451245,45.1779806],[-0.7451591,45.1777872],[-0.7452197,45.1774955]]]]}},{"type":"Feature","properties":{"fid":18,"NOM":"parcelle_de_la_palu_(hors_aoc)","surface":0.05,"cépage":"HORS AOC","Gamme":null,"id_parcelle":"parcelle_de_la_palu_(hors_aoc)"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7412523,45.1772213],[-0.7412405,45.1771974],[-0.7412381,45.1771719],[-0.7412559,45.1771026],[-0.7417984,45.1770609],[-0.7418143,45.1770683],[-0.7418298,45.1771017],[-0.7418331,45.1771453],[-0.7418325,45.1771541],[-0.7418191,45.177181],[-0.7412523,45.1772213]]]]}},{"type":"Feature","properties":{"fid":19,"NOM":"bois_de_la_tour","surface":0.59,"cépage":"M","Gamme":"FL","id_parcelle":"bois_de_la_tour"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7482521,45.1756702],[-0.7483227,45.1757489],[-0.7486215,45.1760818],[-0.7490509,45.1765935],[-0.7490801,45.1766414],[-0.7489492,45.1766431],[-0.7486432,45.1766368],[-0.7482824,45.1766482],[-0.7479376,45.1766528],[-0.747909,45.1766184],[-0.7480514,45.1757809],[-0.7480634,45.1757112],[-0.7482521,45.1756702]]]]}},{"type":"Feature","properties":{"fid":20,"NOM":"petit_faure_2_M","surface":0.66,"cépage":"M","Gamme":"GV","id_parcelle":"petit_faure_2_M"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7464859,45.1801289],[-0.7464189,45.180127],[-0.7460978,45.18012],[-0.7457928,45.1801194],[-0.7455809,45.1801088],[-0.7456816,45.1795655],[-0.7456903,45.1795166],[-0.7457474,45.1792148],[-0.7458751,45.1792213],[-0.7465856,45.1793187],[-0.7465423,45.1796778],[-0.7465256,45.1798143],[-0.7464859,45.1801289]]]]}},{"type":"Feature","properties":{"fid":21,"NOM":"petit_faure_1_M","surface":0.57,"cépage":"M","Gamme":"GV","id_parcelle":"petit_faure_1_M"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7474622,45.1801508],[-0.7471528,45.1801481],[-0.7468479,45.1801373],[-0.7465369,45.1801303],[-0.7465913,45.1796703],[-0.7466112,45.1795134],[-0.7466477,45.1793152],[-0.7469365,45.1793252],[-0.7473266,45.1793458],[-0.7473222,45.1794045],[-0.7473323,45.1794753],[-0.7473953,45.179751],[-0.7474349,45.179948],[-0.7474622,45.1801508]]]]}},{"type":"Feature","properties":{"fid":22,"NOM":"petit_batailley_8","surface":1.7,"cépage":"Plantation","Gamme":null,"id_parcelle":"petit_batailley_8"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7685467,45.1755067],[-0.7679768,45.1759289],[-0.7662527,45.176066],[-0.7662311,45.1760628],[-0.7660665,45.176185],[-0.7660376,45.1761679],[-0.7660118,45.1761869],[-0.765994,45.1761847],[-0.7657529,45.1759754],[-0.7670983,45.1749759],[-0.7674581,45.175113],[-0.7685467,45.1755067]]]]}},{"type":"Feature","properties":{"fid":23,"NOM":"tourette_4","surface":0.83,"cépage":"CS","Gamme":"FL","id_parcelle":"tourette_4"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7827425,45.1677256],[-0.7827293,45.1677162],[-0.7827075,45.1677336],[-0.7814055,45.1674659],[-0.7813961,45.1674455],[-0.7814844,45.1673901],[-0.7823732,45.1669589],[-0.7824392,45.1669524],[-0.78366,45.1671546],[-0.7834386,45.1672938],[-0.7834208,45.1672893],[-0.7827425,45.1677256]]]]}},{"type":"Feature","properties":{"fid":24,"NOM":"forts_de_latour_PV","surface":0.03,"cépage":"PV","Gamme":"GV","id_parcelle":"forts_de_latour_PV"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7478708,45.1795727],[-0.7478435,45.1796085],[-0.7478088,45.1796275],[-0.7474301,45.1795205],[-0.7474419,45.1794526],[-0.7478708,45.1795727]]]]}},{"type":"Feature","properties":{"fid":25,"NOM":"prairie_CS","surface":0.4,"cépage":"CS","Gamme":"FL","id_parcelle":"prairie_CS"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7418086,45.1772093],[-0.7416203,45.1778321],[-0.7410455,45.177901],[-0.7412149,45.1772698],[-0.7412424,45.1772491],[-0.741373,45.1772369],[-0.7413735,45.1772463],[-0.7416222,45.1772193],[-0.7416227,45.1772291],[-0.7418086,45.1772093]]]]}},{"type":"Feature","properties":{"fid":26,"NOM":"chais_1","surface":0.47,"cépage":"CS","Gamme":"GV","id_parcelle":"chais_1"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7438686,45.1760204],[-0.7430832,45.1761786],[-0.7428768,45.175655],[-0.7428857,45.1756406],[-0.7428957,45.1756312],[-0.7431742,45.1755756],[-0.7434759,45.1755157],[-0.7437294,45.1754671],[-0.743802,45.1754522],[-0.7438621,45.1756076],[-0.7439104,45.1757299],[-0.7438997,45.1757326],[-0.7439681,45.1759113],[-0.743921,45.1759206],[-0.7439421,45.1759791],[-0.7438686,45.1760204]]]]}},{"type":"Feature","properties":{"fid":27,"NOM":"chene_vert_2","surface":1.03,"cépage":"CS","Gamme":"GV","id_parcelle":"chene_vert_2"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7493925,45.1744658],[-0.7494376,45.1745332],[-0.7497898,45.1750667],[-0.7497823,45.175093],[-0.7497502,45.1751119],[-0.7494593,45.1751952],[-0.7493069,45.1752253],[-0.7480936,45.1754412],[-0.7480606,45.1753943],[-0.7479958,45.1750121],[-0.7479557,45.1748079],[-0.7479452,45.1747545],[-0.7479594,45.1747335],[-0.748245,45.1746768],[-0.7488718,45.1745607],[-0.7493925,45.1744658]]]]}},{"type":"Feature","properties":{"fid":29,"NOM":"socs_1_CS","surface":0.54,"cépage":"CS","Gamme":"GV","id_parcelle":"socs_1_CS"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7432731,45.1768925],[-0.743045,45.1769101],[-0.7423375,45.1769644],[-0.7418669,45.176999],[-0.7417523,45.1765631],[-0.7417523,45.1765631],[-0.7431153,45.1764591],[-0.7432731,45.1768925]]]]}},{"type":"Feature","properties":{"fid":30,"NOM":"font_de_jeanne_M","surface":0.3,"cépage":"M","Gamme":"FL","id_parcelle":"font_de_jeanne_M"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7469433,45.1810855],[-0.7469428,45.1810745],[-0.7469068,45.1805915],[-0.7475275,45.1805631],[-0.7476003,45.181009],[-0.7471557,45.181161],[-0.7470628,45.1811854],[-0.7469526,45.1812095],[-0.7469433,45.1810855]]]]}},{"type":"Feature","properties":{"fid":31,"NOM":"plantier_blanc_CS","surface":0.37,"cépage":"CS","Gamme":"FL","id_parcelle":"plantier_blanc_CS"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7484501,45.1766914],[-0.7483495,45.1774576],[-0.7477721,45.1774225],[-0.7478943,45.1767008],[-0.7484501,45.1766914]]]]}},{"type":"Feature","properties":{"fid":32,"NOM":"font_de_jeanne_PV","surface":0.69,"cépage":"PV","Gamme":"FL","id_parcelle":"font_de_jeanne_PV"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7469433,45.1810855],[-0.7469526,45.1812095],[-0.7462493,45.1813629],[-0.7442887,45.181534],[-0.7441786,45.1814946],[-0.7441588,45.1812827],[-0.7451025,45.1811051],[-0.7469433,45.1810855]]]]}},{"type":"Feature","properties":{"fid":33,"NOM":"petit_batailley_1_M","surface":0.61,"cépage":"M","Gamme":"FL","id_parcelle":"petit_batailley_1_M"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7672664,45.1734508],[-0.7672815,45.1734713],[-0.7659375,45.1744694],[-0.7658945,45.1744564],[-0.7656342,45.1741452],[-0.7668139,45.1732718],[-0.7672437,45.173428],[-0.7672664,45.1734508]]]]}},{"type":"Feature","properties":{"fid":34,"NOM":"plantier_blanc_PV","surface":0.1,"cépage":"PV","Gamme":"PA","id_parcelle":"plantier_blanc_PV"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7483495,45.1774576],[-0.7484501,45.1766914],[-0.748585,45.1766905],[-0.7485671,45.1768801],[-0.7484924,45.1774656],[-0.7483495,45.1774576]]]]}},{"type":"Feature","properties":{"fid":36,"NOM":"saint_anne_1","surface":1.2,"cépage":"CS","Gamme":"PA","id_parcelle":"saint_anne_1"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.782438,45.1710844],[-0.781992,45.1717191],[-0.7819714,45.1717396],[-0.7819393,45.1717454],[-0.7805005,45.1717039],[-0.7804728,45.1716852],[-0.7815436,45.1704967],[-0.782438,45.1710844]]]]}},{"type":"Feature","properties":{"fid":37,"NOM":"socs_2","surface":1.16,"cépage":"CS","Gamme":"GV","id_parcelle":"socs_2"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7426334,45.175196],[-0.7426871,45.1753337],[-0.7429051,45.1759071],[-0.7430122,45.1761934],[-0.7420885,45.1763778],[-0.7420544,45.1763846],[-0.741726,45.1764499],[-0.7417178,45.1764402],[-0.7416453,45.176164],[-0.741475,45.1755093],[-0.7414723,45.1754815],[-0.7414792,45.1754426],[-0.741511,45.1754192],[-0.74203,45.175315],[-0.7426334,45.175196]]]]}},{"type":"Feature","properties":{"fid":38,"NOM":"saint_anne_3","surface":0.97,"cépage":"CS","Gamme":"PA","id_parcelle":"saint_anne_3"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.781792,45.1701001],[-0.7811616,45.1708003],[-0.7800933,45.1701038],[-0.7808671,45.1694877],[-0.781792,45.1701001]]]]}},{"type":"Feature","properties":{"fid":39,"NOM":"forts_de_latour_CS_nord","surface":0.77,"cépage":"CS","Gamme":"GV","id_parcelle":"forts_de_latour_CS_nord"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7478708,45.1795727],[-0.7474419,45.1794526],[-0.747429,45.1793792],[-0.7475414,45.1787394],[-0.7476036,45.1783976],[-0.7481784,45.178422],[-0.7484649,45.178435],[-0.7485708,45.1784629],[-0.7484392,45.1788382],[-0.7479808,45.1794374],[-0.7478708,45.1795727]]]]}},{"type":"Feature","properties":{"fid":40,"NOM":"petit_faure_1_CS_sud","surface":0.68,"cépage":"CS","Gamme":"GV","id_parcelle":"petit_faure_1_CS_sud"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7473266,45.1793458],[-0.7469365,45.1793252],[-0.7466477,45.1793152],[-0.7466492,45.179295],[-0.7465759,45.1792865],[-0.7467123,45.1782066],[-0.7467712,45.1782144],[-0.7467735,45.1782056],[-0.7475243,45.1783031],[-0.7475278,45.1783205],[-0.7474331,45.178795],[-0.7473266,45.1793458]]]]}},{"type":"Feature","properties":{"fid":41,"NOM":"forts_de_latour_M","surface":0.49,"cépage":"M","Gamme":"FL","id_parcelle":"forts_de_latour_M"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7486168,45.1781069],[-0.7482735,45.1780911],[-0.747711,45.1780651],[-0.7476622,45.1780629],[-0.7477637,45.1774785],[-0.7484855,45.1775105],[-0.7486965,45.1775204],[-0.7486283,45.1780235],[-0.7486168,45.1781069]]]]}},{"type":"Feature","properties":{"fid":42,"NOM":"petit_faure_3","surface":0.77,"cépage":"CS","Gamme":"GV","id_parcelle":"petit_faure_3"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.745997,45.1775468],[-0.7473294,45.1776449],[-0.7476081,45.1776659],[-0.7476609,45.1777174],[-0.7475537,45.1782361],[-0.7474861,45.1782577],[-0.74722,45.1782223],[-0.7460464,45.1780649],[-0.7459024,45.1780537],[-0.745997,45.1775468]]]]}},{"type":"Feature","properties":{"fid":43,"NOM":"saint_anne_2","surface":0.47,"cépage":"M","Gamme":"PA","id_parcelle":"saint_anne_2"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7812619,45.1691833],[-0.782085,45.1696525],[-0.7821559,45.1697015],[-0.781792,45.1701001],[-0.7808671,45.1694877],[-0.7812619,45.1691833]]]]}},{"type":"Feature","properties":{"fid":44,"NOM":"gravette","surface":1.13,"cépage":"CS","Gamme":"GV","id_parcelle":"gravette"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7491809,45.1739556],[-0.7492121,45.1739673],[-0.7493626,45.1744064],[-0.7493433,45.1744248],[-0.7482981,45.1746235],[-0.7476922,45.1747379],[-0.7468489,45.1749028],[-0.7468193,45.1748972],[-0.7468035,45.1748868],[-0.746777,45.1748845],[-0.7467587,45.174871],[-0.7467348,45.1748352],[-0.7465834,45.1744762],[-0.7466104,45.1744404],[-0.746916,45.174383],[-0.7487675,45.1740348],[-0.7491809,45.1739556]]]]}},{"type":"Feature","properties":{"fid":45,"NOM":"trillot_4","surface":0.28,"cépage":"M","Gamme":"FL","id_parcelle":"trillot_4"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7494822,45.1791816],[-0.7492124,45.1790839],[-0.7489563,45.1789889],[-0.7485202,45.1788307],[-0.7486229,45.1786533],[-0.7490729,45.1786647],[-0.7492843,45.1786818],[-0.7492843,45.1786818],[-0.7493035,45.1786833],[-0.7496022,45.1787074],[-0.7494893,45.1787888],[-0.7494661,45.1788281],[-0.7494866,45.1791688],[-0.7494822,45.1791816]]]]}},{"type":"Feature","properties":{"fid":46,"NOM":"trillot_1","surface":0.61,"cépage":"PV","Gamme":"FL","id_parcelle":"trillot_1"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.748187,45.1807988],[-0.7481144,45.1808388],[-0.7480494,45.1808706],[-0.7477122,45.1810236],[-0.747678,45.181005],[-0.7474775,45.1797926],[-0.7486632,45.1804807],[-0.748475,45.1806159],[-0.7483822,45.1806784],[-0.7482962,45.180734],[-0.748187,45.1807988]]]]}},{"type":"Feature","properties":{"fid":47,"NOM":"chais_2","surface":0.41,"cépage":"CS","Gamme":"GV","id_parcelle":"chais_2"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7437563,45.1749798],[-0.7437717,45.1749821],[-0.7439082,45.1753504],[-0.7438999,45.1753614],[-0.7437777,45.1753854],[-0.7437865,45.1754076],[-0.7428504,45.1755908],[-0.7427322,45.1752758],[-0.7426976,45.1751825],[-0.7428488,45.1751515],[-0.7437563,45.1749798]]]]}},{"type":"Feature","properties":{"fid":48,"NOM":"pommiers","surface":0.48,"cépage":"CS","Gamme":"GV","id_parcelle":"pommiers"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7437082,45.1769358],[-0.7436974,45.1770667],[-0.7436456,45.1774354],[-0.7436215,45.177437],[-0.7433541,45.1773864],[-0.7431106,45.1773442],[-0.7427424,45.1772888],[-0.7420543,45.1772123],[-0.7420384,45.1771821],[-0.7419232,45.1771942],[-0.7418742,45.1771406],[-0.7418913,45.1770646],[-0.7430397,45.1769796],[-0.7437082,45.1769358]]]]}},{"type":"Feature","properties":{"fid":49,"NOM":"petit_faure_1_CS_nord","surface":0.33,"cépage":"CS","Gamme":"GV","id_parcelle":"petit_faure_1_CS_nord"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7474622,45.1801508],[-0.7474874,45.1803697],[-0.7474979,45.1804875],[-0.7474798,45.1805051],[-0.7468931,45.1805325],[-0.7465728,45.1805453],[-0.7464862,45.1805431],[-0.7465369,45.1801303],[-0.7468479,45.1801373],[-0.7471528,45.1801481],[-0.7474622,45.1801508]]]]}},{"type":"Feature","properties":{"fid":50,"NOM":"tourette_1","surface":0.17,"cépage":"CS","Gamme":"FL","id_parcelle":"tourette_1"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7809147,45.169132],[-0.7797712,45.1699948],[-0.7796172,45.1699517],[-0.7795784,45.1699352],[-0.7797117,45.1698366],[-0.7797269,45.1698428],[-0.7799884,45.169643],[-0.7800035,45.1696472],[-0.7803101,45.1694195],[-0.7803261,45.169424],[-0.7806164,45.1692016],[-0.7806306,45.1692089],[-0.7807843,45.1690967],[-0.7809147,45.169132]]]]}},{"type":"Feature","properties":{"fid":51,"NOM":"tourette_2","surface":0.48,"cépage":"CS","Gamme":"FL","id_parcelle":"tourette_2"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7818717,45.1683495],[-0.7809821,45.1690672],[-0.7803204,45.1689322],[-0.7803405,45.1689139],[-0.7814267,45.168194],[-0.7818717,45.1683495]]]]}},{"type":"Feature","properties":{"fid":52,"NOM":"saint_anne_4","surface":0.8,"cépage":"CS","Gamme":"FL","id_parcelle":"saint_anne_4"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7811228,45.1708494],[-0.7807172,45.1712978],[-0.7806633,45.1713396],[-0.7794647,45.1705451],[-0.7800034,45.1701212],[-0.7811228,45.1708494]]]]}},{"type":"Feature","properties":{"fid":53,"NOM":"juillac_1","surface":1.2,"cépage":"CS","Gamme":"GV","id_parcelle":"juillac_1"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7469328,45.1738369],[-0.7489773,45.1734045],[-0.7490208,45.1734088],[-0.7491007,45.1736385],[-0.7491921,45.1739021],[-0.7491487,45.1739249],[-0.7488139,45.1739868],[-0.746855,45.1743585],[-0.7466259,45.1744022],[-0.7465453,45.1743891],[-0.7463964,45.1740462],[-0.7463719,45.173983],[-0.7464097,45.1739459],[-0.7469328,45.1738369]]]]}},{"type":"Feature","properties":{"fid":54,"NOM":"petit_faure_2_CS_nord","surface":0.35,"cépage":"CS","Gamme":"GV","id_parcelle":"petit_faure_2_CS_nord"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7464859,45.1801289],[-0.7464704,45.1802914],[-0.746446,45.1804821],[-0.7464297,45.1805347],[-0.7464141,45.1805522],[-0.7458774,45.1805753],[-0.7456392,45.1805853],[-0.7455705,45.1805836],[-0.7455652,45.1805576],[-0.7455664,45.1802685],[-0.7455809,45.1801088],[-0.7457928,45.1801194],[-0.7460978,45.18012],[-0.7464189,45.180127],[-0.7464859,45.1801289]]]]}},{"type":"Feature","properties":{"fid":55,"NOM":"tourette_3","surface":0.73,"cépage":"CS","Gamme":"FL","id_parcelle":"tourette_3"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.782653,45.1677855],[-0.7822421,45.168051],[-0.7822608,45.1680589],[-0.7820053,45.1682174],[-0.7819761,45.1681998],[-0.7819511,45.1682191],[-0.7815053,45.1680573],[-0.7814406,45.1680385],[-0.7813983,45.1680333],[-0.7805418,45.1679552],[-0.7812798,45.1674892],[-0.7826381,45.1677704],[-0.782653,45.1677855]]]]}},{"type":"Feature","properties":{"fid":56,"NOM":"saint_anne_5","surface":1.31,"cépage":"CS","Gamme":"FL","id_parcelle":"saint_anne_5"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7806357,45.171388],[-0.780402,45.1716454],[-0.7803377,45.171694],[-0.7781195,45.1716202],[-0.7794202,45.1705853],[-0.7806357,45.171388]]]]}},{"type":"Feature","properties":{"fid":57,"NOM":"les_gressons_3","surface":0.07,"cépage":"CS","Gamme":"FL","id_parcelle":"les_gressons_3"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.756728,45.1820121],[-0.7563457,45.1820505],[-0.7563407,45.18149],[-0.7567333,45.1815181],[-0.756728,45.1820121]]]]}},{"type":"Feature","properties":{"fid":60,"NOM":"juillac_2_M","surface":0.54,"cépage":"M","Gamme":"GV","id_parcelle":"juillac_2_M"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7478853,45.1736018],[-0.7477292,45.1731522],[-0.7479506,45.1730539],[-0.7482889,45.1729041],[-0.7485838,45.1728],[-0.7486142,45.1727983],[-0.7486399,45.172803],[-0.7488792,45.1731153],[-0.7489346,45.1731986],[-0.7489715,45.1732723],[-0.7489973,45.1733481],[-0.7489666,45.1733706],[-0.7487842,45.1734123],[-0.7478853,45.1736018]]]]}},{"type":"Feature","properties":{"fid":61,"NOM":"jardinots_1","surface":0.68,"cépage":"CS","Gamme":"GV","id_parcelle":"jardinots_1"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7465077,45.1744592],[-0.7467077,45.1749214],[-0.746606,45.1749411],[-0.7463451,45.1749913],[-0.7461772,45.1750238],[-0.7456817,45.1751205],[-0.7452164,45.1752185],[-0.7451755,45.1752158],[-0.7451279,45.1751038],[-0.7450426,45.1748936],[-0.7449758,45.1747526],[-0.7465077,45.1744592]]]]}},{"type":"Feature","properties":{"fid":62,"NOM":"grand_faure_2","surface":2.06,"cépage":"Plantation","Gamme":null,"id_parcelle":"grand_faure_2"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7447081,45.1805535],[-0.7441511,45.1805286],[-0.7441517,45.1805196],[-0.7441156,45.1805178],[-0.7441005,45.1804857],[-0.7440352,45.1796246],[-0.7440432,45.1794806],[-0.7443227,45.1777619],[-0.7443443,45.1777104],[-0.7443845,45.17767],[-0.7447207,45.1775439],[-0.744808,45.1774993],[-0.7448732,45.177466],[-0.7451196,45.1775043],[-0.7450112,45.1780558],[-0.7447081,45.1805535]]]]}},{"type":"Feature","properties":{"fid":63,"NOM":"sarmentier","surface":2.05,"cépage":"CS","Gamme":"GV","id_parcelle":"sarmentier"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7470527,45.1766483],[-0.747259,45.17665],[-0.7475389,45.1766705],[-0.7476889,45.1766816],[-0.7477969,45.1766937],[-0.7478421,45.1767228],[-0.7476844,45.1776041],[-0.747617,45.1776276],[-0.7475928,45.1776296],[-0.7466738,45.1775625],[-0.746152,45.1775258],[-0.7450431,45.1774411],[-0.7449157,45.1774279],[-0.7448794,45.1774162],[-0.7449771,45.1768312],[-0.7450066,45.1768133],[-0.7454214,45.1767543],[-0.7455489,45.1767385],[-0.7458363,45.1767111],[-0.746316,45.1766818],[-0.7467655,45.1766586],[-0.7470527,45.1766483]]]]}},{"type":"Feature","properties":{"fid":64,"NOM":"trillot_2","surface":0.47,"cépage":"M","Gamme":"FL","id_parcelle":"trillot_2"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7474461,45.179575],[-0.7478249,45.179683],[-0.7481771,45.1798441],[-0.7484724,45.1799819],[-0.7489404,45.1802121],[-0.7486479,45.1804382],[-0.7486878,45.1804614],[-0.7486716,45.1804741],[-0.7483134,45.1802669],[-0.7474754,45.1797825],[-0.7474294,45.179577],[-0.7474461,45.179575]]],[[[-0.7488391,45.1798193],[-0.7488162,45.1798514],[-0.7491706,45.1800115],[-0.7491746,45.1800244],[-0.7491569,45.1800481],[-0.748976,45.1801872],[-0.7489507,45.1801727],[-0.7489427,45.1801805],[-0.7486255,45.1800258],[-0.7482343,45.1798414],[-0.7478714,45.1796696],[-0.7480377,45.1794657],[-0.7488391,45.1798193]]]]}},{"type":"Feature","properties":{"fid":65,"NOM":"font_de_jeanne_CS","surface":1.22,"cépage":"Plantation","Gamme":"","id_parcelle":"font_de_jeanne_CS"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7441581,45.181272],[-0.7440993,45.1806462],[-0.7442016,45.1805969],[-0.7454807,45.1806501],[-0.7455058,45.18065],[-0.745557,45.1806486],[-0.7469068,45.1805915],[-0.7469428,45.1810745],[-0.7451034,45.1810997],[-0.7441581,45.181272]]]]}},{"type":"Feature","properties":{"fid":67,"NOM":"chene_vert_1","surface":0.21,"cépage":"CS","Gamme":"GV","id_parcelle":"chene_vert_1"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7495688,45.1752211],[-0.7496177,45.1753269],[-0.7496022,45.1753463],[-0.7495773,45.1753586],[-0.7493936,45.1753986],[-0.7480821,45.1756567],[-0.7480734,45.1756362],[-0.7480926,45.1755178],[-0.7481149,45.1755054],[-0.7481064,45.1754886],[-0.7481564,45.1754719],[-0.7495688,45.1752211]]]]}},{"type":"Feature","properties":{"fid":68,"NOM":"trillot_3","surface":0.64,"cépage":"CS","Gamme":"GV","id_parcelle":"trillot_3"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7494733,45.1791838],[-0.7493909,45.1792948],[-0.7492059,45.1794484],[-0.7490366,45.1795887],[-0.7489417,45.1796956],[-0.7483482,45.1794922],[-0.7480833,45.1794014],[-0.7483669,45.1790364],[-0.7485202,45.1788307],[-0.7489563,45.1789889],[-0.7492124,45.1790839],[-0.7494733,45.1791838]]],[[[-0.7488391,45.1798193],[-0.7480377,45.1794657],[-0.7480679,45.1794253],[-0.7483591,45.1795218],[-0.7485963,45.1796055],[-0.7489235,45.179715],[-0.7488781,45.1797711],[-0.7488391,45.1798193]]]]}},{"type":"Feature","properties":{"fid":69,"NOM":"canaires","surface":0.37,"cépage":"CS","Gamme":"GV","id_parcelle":"canaires"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7431953,45.1746361],[-0.7435801,45.1745549],[-0.7436862,45.1747738],[-0.7437529,45.1749403],[-0.7435489,45.1749817],[-0.7426842,45.175145],[-0.7425433,45.1748175],[-0.7425825,45.1747882],[-0.7427737,45.1747346],[-0.7431953,45.1746361]]]]}},{"type":"Feature","properties":{"fid":71,"NOM":"piece_du_chateau","surface":1.04,"cépage":"CS","Gamme":"GV","id_parcelle":"piece_du_chateau"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7440508,45.176099],[-0.7444293,45.1760314],[-0.7446857,45.1759856],[-0.74471,45.1759884],[-0.7447459,45.1761668],[-0.7448084,45.1765126],[-0.7448291,45.176617],[-0.7448582,45.1767667],[-0.7448353,45.1767704],[-0.7433586,45.1768921],[-0.743343,45.1768837],[-0.7431008,45.1762283],[-0.7431335,45.1762097],[-0.743449,45.176146],[-0.7437886,45.1760773],[-0.7438968,45.1760578],[-0.7439734,45.1760567],[-0.7439923,45.1760748],[-0.744023,45.1760935],[-0.7440508,45.176099]]]]}},{"type":"Feature","properties":{"fid":72,"NOM":"chene_vert_3","surface":1.75,"cépage":"CS","Gamme":"GV","id_parcelle":"chene_vert_3"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7453275,45.1759336],[-0.7452905,45.175933],[-0.7452276,45.1757652],[-0.7451696,45.1756222],[-0.7451161,45.1754896],[-0.7450631,45.1753561],[-0.7450461,45.1752864],[-0.7451838,45.1752609],[-0.7454762,45.1751967],[-0.745784,45.1751381],[-0.7461005,45.175078],[-0.7463991,45.1750221],[-0.7467655,45.1749528],[-0.7470869,45.1748944],[-0.7473958,45.1748369],[-0.7477119,45.1747795],[-0.7478607,45.1747515],[-0.7478907,45.1747623],[-0.7479576,45.1750793],[-0.7479983,45.1753066],[-0.7480146,45.1754447],[-0.7479937,45.1754579],[-0.7475418,45.1755372],[-0.7472334,45.1755914],[-0.7469238,45.175646],[-0.7465403,45.1757139],[-0.7462403,45.1757674],[-0.7459267,45.1758208],[-0.7456191,45.1758742],[-0.7453275,45.1759336]]]]}},{"type":"Feature","properties":{"fid":73,"NOM":"jardinots_2","surface":0.63,"cépage":"CS","Gamme":"GV","id_parcelle":"jardinots_2"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7447713,45.1742957],[-0.7463033,45.1739778],[-0.7465077,45.1744592],[-0.7449758,45.1747526],[-0.7447713,45.1742957]]]]}},{"type":"Feature","properties":{"fid":74,"NOM":"garennes_1","surface":0.39,"cépage":"CS","Gamme":"GV","id_parcelle":"garennes_1"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7449402,45.1747578],[-0.744944,45.1747656],[-0.7449513,45.1747828],[-0.7450885,45.175113],[-0.7450565,45.1751345],[-0.7443209,45.1752819],[-0.7440311,45.1753384],[-0.7439798,45.1753394],[-0.7439648,45.175334],[-0.7438218,45.174972],[-0.7441561,45.174908],[-0.7441765,45.1749598],[-0.7441917,45.1749567],[-0.7442397,45.1749508],[-0.7442185,45.1748961],[-0.744452,45.1748495],[-0.7449402,45.1747578]]]]}},{"type":"Feature","properties":{"fid":75,"NOM":"grand_enclos","surface":2.05,"cépage":"CS","Gamme":"GV","id_parcelle":"grand_enclos"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.74285,45.1783262],[-0.7420912,45.1784028],[-0.7414738,45.1784633],[-0.7418749,45.1772437],[-0.7426339,45.1773392],[-0.7428926,45.1773744],[-0.7431036,45.1774084],[-0.7433356,45.1774473],[-0.7436443,45.1775075],[-0.7442334,45.1776432],[-0.7441862,45.1780415],[-0.744166,45.178223],[-0.7441527,45.178236],[-0.7431747,45.1783032],[-0.74285,45.1783262]]]]}},{"type":"Feature","properties":{"fid":77,"NOM":"plantier_comtesse","surface":0.31,"cépage":"M","Gamme":"FL","id_parcelle":"plantier_comtesse"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7491597,45.1773683],[-0.748827,45.1773484],[-0.748793,45.1773846],[-0.7488004,45.1774127],[-0.748789,45.1774195],[-0.7487967,45.1774577],[-0.7487712,45.1774713],[-0.7485795,45.1774658],[-0.7485524,45.1774612],[-0.7485445,45.1774247],[-0.7486361,45.1766951],[-0.7489972,45.1767001],[-0.749041,45.1767206],[-0.7491597,45.1773683]]]]}},{"type":"Feature","properties":{"fid":78,"NOM":"la_glodoune","surface":0.43,"cépage":"CS","Gamme":"PA","id_parcelle":"la_glodoune"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7660984,45.1848134],[-0.765514,45.1848273],[-0.765427,45.1840059],[-0.7660069,45.1839373],[-0.7660984,45.1848134]]]]}},{"type":"Feature","properties":{"fid":79,"NOM":"les_gressons_4","surface":0.47,"cépage":"CS","Gamme":"FL","id_parcelle":"les_gressons_4"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7568768,45.1820325],[-0.7568946,45.1826473],[-0.7568098,45.1826518],[-0.7568101,45.182671],[-0.7565207,45.182705],[-0.7560663,45.1827442],[-0.7560647,45.1826957],[-0.7560277,45.1826958],[-0.756016,45.1821312],[-0.7562702,45.1821027],[-0.7566028,45.1820724],[-0.7567189,45.1820592],[-0.7568768,45.1820325]]]]}},{"type":"Feature","properties":{"fid":80,"NOM":"la_lagune_CS","surface":0.07,"cépage":"CS","Gamme":"FL","id_parcelle":"la_lagune_CS"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7597575,45.1821801],[-0.7597455,45.1819989],[-0.759847,45.1819851],[-0.7598523,45.1820617],[-0.7598568,45.1821307],[-0.7598666,45.1822633],[-0.7598821,45.1825274],[-0.7598862,45.1826253],[-0.7598915,45.1827981],[-0.759781,45.1827973],[-0.7597772,45.1826636],[-0.7597739,45.1825163],[-0.7597667,45.1823493],[-0.7597575,45.1821801]]]]}},{"type":"Feature","properties":{"fid":81,"NOM":"les_parcs_M","surface":0.07,"cépage":"M","Gamme":"FL","id_parcelle":"les_parcs_M"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7612296,45.1819424],[-0.7612329,45.1818082],[-0.7612291,45.1816304],[-0.7612215,45.1814935],[-0.7612136,45.181406],[-0.7611986,45.1812984],[-0.7613168,45.1812363],[-0.7613286,45.1813589],[-0.7613382,45.1814609],[-0.7613416,45.1815363],[-0.7613455,45.1815985],[-0.7613484,45.1816825],[-0.7613493,45.1817682],[-0.761349,45.1818382],[-0.7613458,45.1819449],[-0.7612296,45.1819424]]]]}},{"type":"Feature","properties":{"fid":82,"NOM":"la_lagune_M","surface":0.23,"cépage":"M","Gamme":"FL","id_parcelle":"la_lagune_M"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7598915,45.1827981],[-0.7598862,45.1826253],[-0.7598821,45.1825274],[-0.7598666,45.1822633],[-0.7598568,45.1821307],[-0.7598523,45.1820617],[-0.759847,45.1819851],[-0.7598462,45.1819693],[-0.7598565,45.1819663],[-0.7598549,45.1819641],[-0.7599436,45.1819328],[-0.7599466,45.1819821],[-0.7599708,45.1820033],[-0.7599735,45.1820432],[-0.7599844,45.182043],[-0.7599726,45.1819281],[-0.7601077,45.1818839],[-0.7601076,45.1818772],[-0.7601329,45.1818654],[-0.760165,45.182246],[-0.7601796,45.1824334],[-0.7601909,45.1826305],[-0.7601971,45.1828019],[-0.760162,45.1828017],[-0.7601619,45.1827928],[-0.7601028,45.1827917],[-0.7601037,45.1828023],[-0.7600332,45.1828031],[-0.7600334,45.1827952],[-0.7599761,45.1827949],[-0.7599755,45.1827986],[-0.7598915,45.1827981]]]]}},{"type":"Feature","properties":{"fid":83,"NOM":"fiouzaille","surface":0.1,"cépage":"CS","Gamme":"FL","id_parcelle":"fiouzaille"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7672397,45.1776689],[-0.7671249,45.1777051],[-0.7669891,45.1774149],[-0.7670006,45.1774117],[-0.7669877,45.1773811],[-0.7669614,45.1773788],[-0.7668062,45.1770469],[-0.7668165,45.1770442],[-0.7668008,45.1770113],[-0.7667885,45.1770135],[-0.7667839,45.1770015],[-0.7667678,45.1770013],[-0.7667338,45.1769233],[-0.7668977,45.1769182],[-0.7672397,45.1776689]]]]}},{"type":"Feature","properties":{"fid":84,"NOM":"roca_1","surface":0.9,"cépage":"CS","Gamme":"FL","id_parcelle":"roca_1"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7776774,45.1763621],[-0.7780824,45.1757332],[-0.7784175,45.175855],[-0.7784514,45.1758673],[-0.7793908,45.176206],[-0.7789891,45.1768355],[-0.7776774,45.1763621]]]]}},{"type":"Feature","properties":{"fid":85,"NOM":"saint_anne_6","surface":1.25,"cépage":"CS","Gamme":null,"id_parcelle":"saint_anne_6"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.782438,45.1710844],[-0.7815436,45.1704967],[-0.7823783,45.1695759],[-0.782382,45.1695713],[-0.7824167,45.1695711],[-0.7833591,45.1696981],[-0.7833904,45.1697203],[-0.782438,45.1710844]]]]}},{"type":"Feature","properties":{"fid":86,"NOM":"roca_2","surface":0.89,"cépage":"CS","Gamme":"FL","id_parcelle":"roca_2"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7776774,45.1763621],[-0.7774505,45.1762678],[-0.7770467,45.1760898],[-0.7769167,45.1760345],[-0.7768475,45.1760099],[-0.7764819,45.1758825],[-0.7763905,45.1758522],[-0.7763262,45.1758326],[-0.7767147,45.1752283],[-0.7780824,45.1757332],[-0.7776774,45.1763621]]]]}},{"type":"Feature","properties":{"fid":89,"NOM":"moussas","surface":2.14,"cépage":"CS","Gamme":"PA","id_parcelle":"moussas"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7688126,45.1813016],[-0.7674166,45.1815093],[-0.7672759,45.1809625],[-0.767002,45.1800293],[-0.7687377,45.179738],[-0.7687427,45.1797483],[-0.7687648,45.1797456],[-0.7688126,45.1813016]]]]}},{"type":"Feature","properties":{"fid":90,"NOM":"petit_batailley_7","surface":0.72,"cépage":"M","Gamme":"PA","id_parcelle":"petit_batailley_7"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.767588,45.1761403],[-0.7676228,45.1762675],[-0.7676133,45.1762682],[-0.7676319,45.1763389],[-0.7676197,45.1763402],[-0.7676996,45.1766304],[-0.7661664,45.1767944],[-0.7660143,45.1762452],[-0.767588,45.1761403]]]]}},{"type":"Feature","properties":{"fid":91,"NOM":"petit_batailley_6","surface":0.56,"cépage":"CS","Gamme":"PA","id_parcelle":"petit_batailley_6"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.769036,45.1761891],[-0.7688781,45.1762643],[-0.7687625,45.1763105],[-0.7683945,45.1764423],[-0.7682986,45.1764683],[-0.7683017,45.1764766],[-0.7677623,45.1766213],[-0.7676653,45.1761373],[-0.7680272,45.1760406],[-0.7680236,45.1760268],[-0.7684254,45.1757816],[-0.7685727,45.1757406],[-0.769036,45.1761891]]]]}},{"type":"Feature","properties":{"fid":92,"NOM":"petit_batailley_3","surface":1.03,"cépage":"CS","Gamme":"FL","id_parcelle":"petit_batailley_3"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7693978,45.1750193],[-0.7694532,45.175025],[-0.7694786,45.1750316],[-0.7702951,45.1753274],[-0.7703203,45.1753409],[-0.7703393,45.1753615],[-0.7703522,45.175403],[-0.7703552,45.1754666],[-0.7703519,45.1755605],[-0.7703413,45.1756634],[-0.7702709,45.1757165],[-0.7691937,45.1761236],[-0.7691362,45.176121],[-0.7690938,45.176112],[-0.7686229,45.175665],[-0.7686129,45.1756467],[-0.7686151,45.1756014],[-0.7687648,45.175484],[-0.7689732,45.1753289],[-0.7693978,45.1750193]]]]}},{"type":"Feature","properties":{"fid":94,"NOM":"petit_batailley_5","surface":1.31,"cépage":"CS","Gamme":"FL","id_parcelle":"petit_batailley_5"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7657529,45.1759754],[-0.7654993,45.175751],[-0.7654284,45.1756862],[-0.7653077,45.1755682],[-0.7652359,45.1754907],[-0.7650306,45.1752507],[-0.7650255,45.1752413],[-0.7650239,45.1751986],[-0.7658792,45.1745629],[-0.7659407,45.1745617],[-0.7659685,45.1745672],[-0.7671013,45.1749739],[-0.7670983,45.1749759],[-0.7657529,45.1759754]]]]}},{"type":"Feature","properties":{"fid":96,"NOM":"pinada_2","surface":0.62,"cépage":"Terre","Gamme":"","id_parcelle":"pinada_2"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7607396,45.1720184],[-0.7623261,45.1726138],[-0.7623864,45.1726395],[-0.7622272,45.172748],[-0.7606749,45.1727261],[-0.7606616,45.1727216],[-0.7606402,45.1727121],[-0.7606325,45.1727054],[-0.7606283,45.1726921],[-0.7607226,45.1720286],[-0.7607396,45.1720184]]]]}},{"type":"Feature","properties":{"fid":97,"NOM":"petit_batailley_1_CS","surface":0.78,"cépage":"CS","Gamme":"FL","id_parcelle":"petit_batailley_1_CS"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7668139,45.1732718],[-0.7656342,45.1741452],[-0.7652169,45.1736371],[-0.7652119,45.1735842],[-0.7658845,45.1730462],[-0.7659663,45.1729871],[-0.7660224,45.1729898],[-0.7668139,45.1732718]]]]}},{"type":"Feature","properties":{"fid":98,"NOM":"petit_batailley_2_bis","surface":0.35,"cépage":"CS","Gamme":"FL","id_parcelle":"petit_batailley_2_bis"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7703428,45.175258],[-0.7703205,45.1752757],[-0.7702926,45.1752716],[-0.7702712,45.1752672],[-0.7695129,45.1749942],[-0.769499,45.1749848],[-0.7694814,45.1749593],[-0.7701057,45.1744947],[-0.7701561,45.17449],[-0.7702043,45.174493],[-0.770279,45.1745172],[-0.7703133,45.1745321],[-0.7703285,45.1745473],[-0.7703406,45.1745715],[-0.7703437,45.1745889],[-0.7703213,45.1749107],[-0.7703206,45.174944],[-0.7703428,45.175258]]]]}},{"type":"Feature","properties":{"fid":99,"NOM":"pinada_3","surface":1.6,"cépage":"Terre","Gamme":"","id_parcelle":"pinada_3"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7624281,45.1726122],[-0.7607379,45.1719766],[-0.7607319,45.171953],[-0.760841,45.1711922],[-0.7608631,45.171178],[-0.7632494,45.1719848],[-0.7632595,45.1719914],[-0.7632658,45.171999],[-0.7632742,45.1720233],[-0.7624281,45.1726122]]]]}},{"type":"Feature","properties":{"fid":100,"NOM":"artigues_centre_4","surface":0.8,"cépage":"CS","Gamme":"PA","id_parcelle":"artigues_centre_4"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7774447,45.1924999],[-0.7779612,45.1924212],[-0.7779901,45.1925289],[-0.7780022,45.1927066],[-0.7780114,45.1934576],[-0.7779971,45.1936065],[-0.7778066,45.1936054],[-0.7773628,45.1935669],[-0.7774447,45.1924999]]]]}},{"type":"Feature","properties":{"fid":101,"NOM":"artigues_les_chevres_3","surface":0.34,"cépage":"CS","Gamme":"FL","id_parcelle":"artigues_les_chevres_3"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7844733,45.1912169],[-0.7844892,45.1907144],[-0.7854351,45.190678],[-0.7850393,45.191225],[-0.7849826,45.1912286],[-0.7844733,45.1912169]]]]}},{"type":"Feature","properties":{"fid":102,"NOM":"artigues_les_chevres_1","surface":0.21,"cépage":"M","Gamme":"FL","id_parcelle":"artigues_les_chevres_1"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7843013,45.1914824],[-0.7842874,45.1914814],[-0.7842823,45.1915417],[-0.7832113,45.1914823],[-0.7832808,45.1911986],[-0.784314,45.1912592],[-0.7843013,45.1914824]]]]}},{"type":"Feature","properties":{"fid":103,"NOM":"pibran_1","surface":0.33,"cépage":"M","Gamme":"PA","id_parcelle":"pibran_1"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7721857,45.1962567],[-0.773171,45.1962547],[-0.7733092,45.196262],[-0.7733038,45.1966245],[-0.7722026,45.1965689],[-0.7721839,45.1964634],[-0.7721876,45.196436],[-0.7721817,45.1963905],[-0.7721857,45.1962567]]]]}},{"type":"Feature","properties":{"fid":104,"NOM":"artigues_le_bois_3","surface":0.36,"cépage":"CS","Gamme":"FL","id_parcelle":"artigues_le_bois_3"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7821649,45.1904016],[-0.781679,45.1905309],[-0.781603,45.1905501],[-0.7815778,45.1898883],[-0.7815813,45.1898511],[-0.7816469,45.1898405],[-0.781811,45.1898107],[-0.7818515,45.1898042],[-0.7818872,45.1897973],[-0.7819421,45.1897854],[-0.7819937,45.1897715],[-0.7820391,45.1897526],[-0.7821418,45.1897208],[-0.7822179,45.1897064],[-0.7821649,45.1904016]]]]}},{"type":"Feature","properties":{"fid":105,"NOM":"artigues_roseaux","surface":0.23,"cépage":"M","Gamme":"FL","id_parcelle":"artigues_roseaux"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7812442,45.1911044],[-0.7814157,45.1911102],[-0.781449,45.1911561],[-0.7814487,45.1912246],[-0.7816434,45.1912215],[-0.7816595,45.1918098],[-0.7816261,45.1918269],[-0.7812643,45.1918126],[-0.7812442,45.1911044]]]]}},{"type":"Feature","properties":{"fid":106,"NOM":"berret_3","surface":0.22,"cépage":"M","Gamme":"PA","id_parcelle":"berret_3"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7849624,45.2048383],[-0.7845184,45.204833],[-0.7845334,45.2044795],[-0.7845563,45.2044726],[-0.7845579,45.2044218],[-0.7845462,45.2044221],[-0.7845745,45.2036687],[-0.7845961,45.2036483],[-0.7846211,45.2036488],[-0.7849783,45.2038168],[-0.7849745,45.2039103],[-0.7849995,45.20391],[-0.7849624,45.2048383]]]]}},{"type":"Feature","properties":{"fid":107,"NOM":"artigues_virage","surface":0.51,"cépage":"CS","Gamme":"PA","id_parcelle":"artigues_virage"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7830549,45.1921316],[-0.7829845,45.1923519],[-0.7829722,45.1923516],[-0.7828416,45.1927711],[-0.7827236,45.1927459],[-0.7821742,45.1926603],[-0.7823767,45.1920067],[-0.7827374,45.1920354],[-0.7828069,45.192071],[-0.7829929,45.1921164],[-0.7830133,45.1921246],[-0.7830549,45.1921316]]]]}},{"type":"Feature","properties":{"fid":108,"NOM":"rodites_2_CS","surface":0.12,"cépage":"CS","Gamme":"FL","id_parcelle":"rodites_2_CS"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7486047,45.190075],[-0.7486437,45.1899588],[-0.7497589,45.1901263],[-0.7496917,45.190238],[-0.7486047,45.190075]]]]}},{"type":"Feature","properties":{"fid":109,"NOM":"artigues_le_bois_4","surface":0.37,"cépage":"CS","Gamme":"FL","id_parcelle":"artigues_le_bois_4"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7809736,45.1906259],[-0.7809452,45.1899296],[-0.7815387,45.1898573],[-0.781566,45.19056],[-0.7814705,45.1905819],[-0.7813793,45.1905963],[-0.7813246,45.1906028],[-0.7809736,45.1906259]]]]}},{"type":"Feature","properties":{"fid":111,"NOM":"rodites_2_M","surface":0.44,"cépage":"M","Gamme":"FL","id_parcelle":"rodites_2_M"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7486437,45.1899588],[-0.7487382,45.1896787],[-0.7487666,45.1896837],[-0.7489031,45.189683],[-0.7490769,45.1895772],[-0.7491189,45.1895639],[-0.7499888,45.1896969],[-0.7497909,45.1901051],[-0.7497742,45.1901023],[-0.7497589,45.1901263],[-0.7486437,45.1899588]]]]}},{"type":"Feature","properties":{"fid":112,"NOM":"rodites_1","surface":0.32,"cépage":"CS","Gamme":"PA","id_parcelle":"rodites_1"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7496632,45.1895859],[-0.7499417,45.1886827],[-0.750219,45.188732],[-0.7503328,45.1888016],[-0.7502863,45.1889484],[-0.7502748,45.188946],[-0.7501996,45.1891907],[-0.7501866,45.1891886],[-0.7500457,45.1896473],[-0.7496632,45.1895859]]]]}},{"type":"Feature","properties":{"fid":113,"NOM":"artigues_le_bois_2","surface":0.51,"cépage":"M","Gamme":"FL","id_parcelle":"artigues_le_bois_2"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7829462,45.190192],[-0.7821649,45.1904016],[-0.7822179,45.1897064],[-0.7824371,45.189612],[-0.7827508,45.1894519],[-0.7828796,45.1894046],[-0.7829761,45.1893747],[-0.7830091,45.1893668],[-0.7829462,45.190192]]]]}},{"type":"Feature","properties":{"fid":114,"NOM":"artigues_le_bois_1","surface":0.41,"cépage":"CS","Gamme":"FL","id_parcelle":"artigues_le_bois_1"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7836105,45.1900069],[-0.783204,45.1901224],[-0.7829462,45.190192],[-0.7830091,45.1893668],[-0.7831003,45.1893655],[-0.7836574,45.189407],[-0.7836105,45.1900069]]]]}},{"type":"Feature","properties":{"fid":115,"NOM":"pibran_2","surface":0.21,"cépage":"CS","Gamme":"PA","id_parcelle":"pibran_2"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7713101,45.1953548],[-0.7713403,45.1954596],[-0.771356,45.1955229],[-0.7713634,45.1955657],[-0.7713775,45.1956464],[-0.7714068,45.1958461],[-0.7711634,45.1958613],[-0.7711492,45.1957423],[-0.7711411,45.1956796],[-0.771135,45.1956447],[-0.7711261,45.1956036],[-0.7711124,45.1955447],[-0.771094,45.1954743],[-0.7710805,45.1954249],[-0.7710493,45.1953257],[-0.7710034,45.1952057],[-0.7708962,45.1949346],[-0.7711153,45.1948407],[-0.7713101,45.1953548]]]]}},{"type":"Feature","properties":{"fid":116,"NOM":"artigues_planteyrot_2","surface":0.02,"cépage":"M","Gamme":"FL","id_parcelle":"artigues_planteyrot_2"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7765113,45.1939477],[-0.7765103,45.1939926],[-0.7759184,45.1939856],[-0.7759125,45.19394],[-0.7765113,45.1939477]]]]}},{"type":"Feature","properties":{"fid":117,"NOM":"berret_1","surface":0.83,"cépage":"M","Gamme":"PA","id_parcelle":"berret_1"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7869309,45.2056886],[-0.7853905,45.2056704],[-0.7854122,45.2049309],[-0.7864668,45.2049581],[-0.786459,45.2053117],[-0.7869442,45.2053161],[-0.7869309,45.2056886]]]]}},{"type":"Feature","properties":{"fid":118,"NOM":"artigues_centre_3","surface":0.06,"cépage":"M","Gamme":"FL","id_parcelle":"artigues_centre_3"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7781297,45.1931861],[-0.7781441,45.193188],[-0.7781887,45.1932401],[-0.7781632,45.1938636],[-0.7781513,45.1938649],[-0.778149,45.1939014],[-0.7781721,45.193906],[-0.778161,45.1941963],[-0.7781481,45.194199],[-0.7781468,45.1942445],[-0.7780803,45.1942451],[-0.7781297,45.1931861]]]]}},{"type":"Feature","properties":{"fid":120,"NOM":"artigues_planteyrot_3","surface":0.16,"cépage":"CS","Gamme":"FL","id_parcelle":"artigues_planteyrot_3"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7764997,45.1938095],[-0.7758811,45.1937989],[-0.775854,45.1936482],[-0.7758504,45.193577],[-0.7758942,45.1935394],[-0.775987,45.1935039],[-0.7760178,45.193501],[-0.7764876,45.1935127],[-0.7764915,45.193547],[-0.7764997,45.1938095]]]]}},{"type":"Feature","properties":{"fid":121,"NOM":"artigues_centre_1","surface":0.06,"cépage":"CS","Gamme":"FL","id_parcelle":"artigues_centre_1"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7806314,45.1924737],[-0.7805096,45.1924487],[-0.7807039,45.1919204],[-0.7807252,45.1919188],[-0.7807336,45.1919029],[-0.7808293,45.1919021],[-0.7806314,45.1924737]]]]}},{"type":"Feature","properties":{"fid":122,"NOM":"artigues_centre_2","surface":0.08,"cépage":"CS","Gamme":"FL","id_parcelle":"artigues_centre_2"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7800213,45.1931192],[-0.7799408,45.1931217],[-0.7800773,45.1925326],[-0.7803025,45.1919491],[-0.7803861,45.1919443],[-0.7802998,45.1921647],[-0.7802607,45.1922587],[-0.780169,45.1925039],[-0.7800213,45.1931192]]]]}},{"type":"Feature","properties":{"fid":123,"NOM":"artigues_le_bois_6","surface":0.54,"cépage":"CS","Gamme":"FL","id_parcelle":"artigues_le_bois_6"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7807096,45.1899633],[-0.7807535,45.1906299],[-0.7804431,45.1906677],[-0.7801971,45.1906846],[-0.7801302,45.1906851],[-0.779825,45.190652],[-0.7797829,45.1900119],[-0.7803976,45.1899987],[-0.7807096,45.1899633]]]]}},{"type":"Feature","properties":{"fid":125,"NOM":"artigues_triau_bas_2","surface":0.17,"cépage":"M","Gamme":"PA","id_parcelle":"artigues_triau_bas_2"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7847532,45.1954144],[-0.7849935,45.1954102],[-0.7850427,45.1959895],[-0.7846971,45.1959946],[-0.7846542,45.1954617],[-0.7847532,45.1954144]]]]}},{"type":"Feature","properties":{"fid":126,"NOM":"artigues_triau_haut_1","surface":0.42,"cépage":"M","Gamme":"PA","id_parcelle":"artigues_triau_haut_1"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7845913,45.1944511],[-0.7851249,45.19444],[-0.7852021,45.1953501],[-0.7847921,45.1953526],[-0.7846505,45.1953036],[-0.7846216,45.1949607],[-0.7846345,45.1949603],[-0.7845913,45.1944511]]]]}},{"type":"Feature","properties":{"fid":127,"NOM":"artigues_les_chevres_2","surface":0.49,"cépage":"M","Gamme":"FL","id_parcelle":"artigues_les_chevres_2"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7844248,45.1905617],[-0.7844166,45.1910386],[-0.7832973,45.1909548],[-0.7831922,45.1904701],[-0.7844248,45.1905617]]]]}},{"type":"Feature","properties":{"fid":130,"NOM":"artigues_la_gravette","surface":0.17,"cépage":"CS","Gamme":"PA","id_parcelle":"artigues_la_gravette"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7822636,45.190428],[-0.7825376,45.1903581],[-0.7824552,45.1911118],[-0.7821873,45.1911099],[-0.7822636,45.190428]]]]}},{"type":"Feature","properties":{"fid":132,"NOM":"artigues_le_bois_5","surface":0.14,"cépage":"CS","Gamme":"PA","id_parcelle":"artigues_le_bois_5"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7809736,45.1906259],[-0.7807535,45.1906299],[-0.7807096,45.1899633],[-0.7809452,45.1899296],[-0.7809736,45.1906259]]]]}},{"type":"Feature","properties":{"fid":133,"NOM":"artigues_planteyrot_1","surface":0.02,"cépage":"M","Gamme":"FL","id_parcelle":"artigues_planteyrot_1"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7765109,45.1941366],[-0.7765071,45.1941766],[-0.7765006,45.1941894],[-0.7762019,45.194187],[-0.7759937,45.1941443],[-0.7759461,45.1941327],[-0.7765109,45.1941366]]]]}},{"type":"Feature","properties":{"fid":137,"NOM":"piece_de_la_tour","surface":1.39,"cépage":"CS","Gamme":"GV","id_parcelle":"piece_de_la_tour"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7478033,45.1766499],[-0.7471807,45.1766015],[-0.745916,45.1766655],[-0.7457169,45.1766779],[-0.7450605,45.1767497],[-0.7450135,45.1767491],[-0.7449761,45.1767393],[-0.7449537,45.1767349],[-0.7449408,45.176719],[-0.7449249,45.1766935],[-0.7449121,45.1766657],[-0.7449101,45.1766129],[-0.7449254,45.1766191],[-0.7449427,45.1766221],[-0.7449666,45.1766202],[-0.7449901,45.1766135],[-0.745004,45.176602],[-0.7449997,45.1765678],[-0.7449975,45.1765606],[-0.7449936,45.1765539],[-0.7449882,45.1765477],[-0.7449815,45.1765422],[-0.7449736,45.1765375],[-0.7449646,45.1765338],[-0.744955,45.1765311],[-0.744945,45.1765296],[-0.7449347,45.1765292],[-0.7449245,45.17653],[-0.7449146,45.176532],[-0.7449052,45.176535],[-0.7448967,45.1765392],[-0.7448892,45.1765442],[-0.7448829,45.17655],[-0.7448781,45.1765563],[-0.7448367,45.1762401],[-0.7448245,45.1762409],[-0.7447908,45.1759675],[-0.7451811,45.1758963],[-0.7451961,45.1759058],[-0.7452102,45.1759413],[-0.7452108,45.1759956],[-0.7469281,45.1756934],[-0.7480092,45.1755026],[-0.7478033,45.1766499]]]]}},{"type":"Feature","properties":{"fid":139,"NOM":"petit_batailley_2","surface":1.2,"cépage":"CS","Gamme":"FL","id_parcelle":"petit_batailley_2"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7694236,45.1749369],[-0.769363,45.1749391],[-0.7690694,45.1748498],[-0.7666912,45.1739838],[-0.7673481,45.1734862],[-0.7700346,45.1744324],[-0.7700577,45.1744665],[-0.7694236,45.1749369]]]]}},{"type":"Feature","properties":{"fid":142,"NOM":"petit_batailley_4","surface":0.99,"cépage":"CS","Gamme":"FL","id_parcelle":"petit_batailley_4"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7693231,45.1750106],[-0.768685,45.1754832],[-0.7686266,45.1754693],[-0.7685531,45.1754462],[-0.7659608,45.1745195],[-0.766652,45.1740184],[-0.7693058,45.1749699],[-0.7693163,45.1749827],[-0.7693231,45.1750106]]]]}},{"type":"Feature","properties":{"fid":146,"NOM":"forts_de_latour_CS_sud","surface":0.25,"cépage":"CS","Gamme":"GV","id_parcelle":"forts_de_latour_CS_sud"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7485801,45.1783978],[-0.7476114,45.1783533],[-0.7476622,45.1780629],[-0.7486168,45.1781069],[-0.7485801,45.1783978]]]]}},{"type":"Feature","properties":{"fid":147,"NOM":"roca_3","surface":0.93,"cépage":"CS","Gamme":"FL","id_parcelle":"roca_3"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7763262,45.1758326],[-0.7755811,45.17562],[-0.7752692,45.1755099],[-0.7749664,45.1754146],[-0.7749254,45.1753864],[-0.7750029,45.1752586],[-0.7754405,45.1747641],[-0.7767147,45.1752283],[-0.7763262,45.1758326]]]]}},{"type":"Feature","properties":{"fid":148,"NOM":"dardenans_1","surface":0.39,"cépage":"M","Gamme":"PA","id_parcelle":"dardenans_1"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7611324,45.1846835],[-0.760774,45.1846356],[-0.7607754,45.1838009],[-0.7607948,45.1837292],[-0.7610279,45.1837241],[-0.761254,45.1837517],[-0.7613374,45.1837817],[-0.7613686,45.1838106],[-0.7611324,45.1846835]]]]}},{"type":"Feature","properties":{"fid":149,"NOM":"dardenans_2","surface":1.04,"cépage":"CS","Gamme":"PA","id_parcelle":"dardenans_2"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7607237,45.1846311],[-0.7605214,45.184594],[-0.7603152,45.1845346],[-0.760042,45.1844275],[-0.7596541,45.1842734],[-0.7596902,45.1833626],[-0.7607351,45.1833484],[-0.7607382,45.1842174],[-0.7607237,45.1846311]]]]}},{"type":"Feature","properties":{"fid":150,"NOM":"dardenans_3","surface":0.43,"cépage":"CS","Gamme":"PA","id_parcelle":"dardenans_3"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7607355,45.1833209],[-0.7607387,45.1831926],[-0.7607274,45.183191],[-0.7607383,45.182871],[-0.7607141,45.1828433],[-0.759709,45.1828553],[-0.7596898,45.1833391],[-0.7607355,45.1833209]]]]}},{"type":"Feature","properties":{"fid":151,"NOM":"les_parcs_CS","surface":0.08,"cépage":"CS","Gamme":"FL","id_parcelle":"les_parcs_CS"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7611986,45.1812984],[-0.7610555,45.1813619],[-0.7610726,45.1819378],[-0.761229,45.1819507],[-0.7612246,45.1815948],[-0.7611986,45.1812984]]]]}},{"type":"Feature","properties":{"fid":152,"NOM":"les_parcs_CS","surface":0.03,"cépage":"CS","Gamme":"FL","id_parcelle":"les_parcs_CS"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7609755,45.181926],[-0.7609009,45.1819171],[-0.7608751,45.1814577],[-0.7609484,45.1814231],[-0.7609755,45.181926]]]]}},{"type":"Feature","properties":{"fid":153,"NOM":"terre_noire","surface":0.02,"cépage":"CS","Gamme":"FL","id_parcelle":"terre_noire"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7642815,45.181634],[-0.7645821,45.1824247],[-0.7645564,45.1824315],[-0.7642599,45.1816397],[-0.7642815,45.181634]]]]}},{"type":"Feature","properties":{"fid":162,"NOM":"grande_lande_2","surface":0.19,"cépage":"CS","Gamme":"FL","id_parcelle":"grande_lande_2"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7637596,45.1866505],[-0.7639245,45.1867315],[-0.7633717,45.1871638],[-0.7632073,45.1872947],[-0.763058,45.1874533],[-0.7629975,45.1875463],[-0.7628165,45.1874821],[-0.7630084,45.1872529],[-0.7633012,45.1870109],[-0.763504,45.1868585],[-0.7637596,45.1866505]]]]}},{"type":"Feature","properties":{"fid":163,"NOM":"artigues_centre_5","surface":0.16,"cépage":"CS","Gamme":"PA","id_parcelle":"artigues_centre_5"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7779897,45.1936867],[-0.7776766,45.1936882],[-0.7776785,45.1937383],[-0.7776276,45.1937385],[-0.7776457,45.1942337],[-0.7779575,45.1942412],[-0.7779897,45.1936867]]]]}},{"type":"Feature","properties":{"fid":164,"NOM":"berret_2","surface":0.74,"cépage":"M","Gamme":"PA","id_parcelle":"berret_2"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7853905,45.2056704],[-0.7843034,45.2056621],[-0.7842965,45.2048969],[-0.7854122,45.2049309],[-0.7853905,45.2056704]]]]}},{"type":"Feature","properties":{"fid":165,"NOM":"saucina","surface":1.12,"cépage":"Terre","Gamme":null,"id_parcelle":"saucina"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7601788,45.2000999],[-0.7601596,45.2001189],[-0.7592492,45.2005853],[-0.7589719,45.2007218],[-0.7588522,45.2007725],[-0.7583782,45.2008931],[-0.7580435,45.1999784],[-0.7586662,45.1999287],[-0.7589864,45.1999034],[-0.7592647,45.1998836],[-0.7600414,45.1997394],[-0.7600906,45.199752],[-0.7601473,45.1999319],[-0.7601788,45.2000999]]]]}},{"type":"Feature","properties":{"fid":166,"NOM":"gaillottes_7","surface":0.3,"cépage":"CS","Gamme":"FL","id_parcelle":"gaillottes_7"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.76344,45.1828071],[-0.7632288,45.1828244],[-0.7632292,45.1828317],[-0.7630694,45.1828398],[-0.7627679,45.1819314],[-0.762921,45.1819235],[-0.7631307,45.1819017],[-0.76344,45.1828071]]]]}},{"type":"Feature","properties":{"fid":167,"NOM":"gaillottes_7","surface":0.18,"cépage":"CS","Gamme":"FL","id_parcelle":"gaillottes_7"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7630167,45.1828402],[-0.7630197,45.1827677],[-0.7627352,45.181934],[-0.7626765,45.1819368],[-0.7626773,45.1828393],[-0.7630167,45.1828402]]]]}},{"type":"Feature","properties":{"fid":168,"NOM":"gaillottes_6","surface":0.06,"cépage":"M","Gamme":"FL","id_parcelle":"gaillottes_6"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7626764,45.1828263],[-0.7625987,45.1828252],[-0.7625985,45.1819559],[-0.7626761,45.1819538],[-0.7626764,45.1828263]]]]}},{"type":"Feature","properties":{"fid":169,"NOM":"gaillottes_5","surface":0.13,"cépage":"CS","Gamme":"FL","id_parcelle":"gaillottes_5"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7625981,45.1828335],[-0.7624999,45.1828305],[-0.7625002,45.1828399],[-0.762435,45.1828404],[-0.7624375,45.181942],[-0.7625984,45.1819457],[-0.7625981,45.1828335]]]]}},{"type":"Feature","properties":{"fid":170,"NOM":"gaillottes_5","surface":0.12,"cépage":"CS","Gamme":"FL","id_parcelle":"gaillottes_5"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7623792,45.1828352],[-0.7622188,45.1828265],[-0.7622217,45.1819555],[-0.7623816,45.1819456],[-0.7623866,45.1824697],[-0.7623858,45.182733],[-0.7623792,45.1828352]]]]}},{"type":"Feature","properties":{"fid":171,"NOM":"gaillottes_4","surface":0.04,"cépage":"M","Gamme":"FL","id_parcelle":"gaillottes_4"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7622188,45.1828265],[-0.762166,45.1828221],[-0.7621775,45.1823825],[-0.762171,45.1819598],[-0.7622217,45.1819555],[-0.7622291,45.182466],[-0.7622188,45.1828265]]]]}},{"type":"Feature","properties":{"fid":172,"NOM":"gaillottes_3","surface":0.33,"cépage":"CS","Gamme":"FL","id_parcelle":"gaillottes_3"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.762166,45.1828221],[-0.761811,45.1828006],[-0.7617215,45.1828024],[-0.7617107,45.1819877],[-0.762171,45.1819598],[-0.7621775,45.1823825],[-0.762166,45.1828221]]]]}},{"type":"Feature","properties":{"fid":173,"NOM":"gaillottes_2","surface":0.09,"cépage":"M","Gamme":"FL","id_parcelle":"gaillottes_2"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7617215,45.1828024],[-0.7615909,45.1827962],[-0.7615819,45.181991],[-0.7617108,45.181988],[-0.7617215,45.1828024]]]]}},{"type":"Feature","properties":{"fid":174,"NOM":"gaillottes_1","surface":0.7,"cépage":"CS","Gamme":"FL","id_parcelle":"gaillottes_1"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7615909,45.1827962],[-0.7614754,45.1828005],[-0.7614649,45.1819961],[-0.7615819,45.181991],[-0.7615909,45.1827962]]]]}},{"type":"Feature","properties":{"fid":175,"NOM":"gaillottes_1","surface":0.2,"cépage":"CS","Gamme":"FL","id_parcelle":"gaillottes_1"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7614308,45.1827987],[-0.7614214,45.181993],[-0.7611405,45.1819877],[-0.7611508,45.1827953],[-0.7614308,45.1827987]]]]}},{"type":"Feature","properties":{"fid":181,"NOM":"parc_de_pelon","surface":null,"cépage":"M","Gamme":"FL","id_parcelle":"parc_de_pelon"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7845216,45.1936031],[-0.7834794,45.1934577],[-0.78346,45.1940429],[-0.7835415,45.1940547],[-0.7844286,45.1940455],[-0.7844468,45.1939064],[-0.7844635,45.1937367],[-0.7845216,45.1936031]]]]}},{"type":"Feature","properties":{"fid":182,"NOM":"petit_sablonnet","surface":null,"cépage":"Terre","Gamme":null,"id_parcelle":"petit_sablonnet"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7422395,45.1797493],[-0.7420311,45.1784707],[-0.7419579,45.1784449],[-0.7410092,45.1785998],[-0.7408334,45.1786695],[-0.7407126,45.1787341],[-0.7406173,45.1788245],[-0.7405441,45.1789019],[-0.7404781,45.1789897],[-0.7404452,45.1790878],[-0.7404818,45.1791988],[-0.7408903,45.179764],[-0.7422395,45.1797493]]]]}},{"type":"Feature","properties":{"fid":187,"NOM":"lespret","surface":null,"cépage":"CS","Gamme":"FL","id_parcelle":"lespret"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7625623,45.1792583],[-0.7625104,45.1792925],[-0.7624619,45.1791614],[-0.7624251,45.1790507],[-0.7623799,45.1788907],[-0.7623348,45.178675],[-0.7622964,45.178443],[-0.7622728,45.1782816],[-0.7623334,45.1782749],[-0.7623802,45.1785519],[-0.7624033,45.1786824],[-0.7624139,45.1787485],[-0.7624739,45.1789957],[-0.7625234,45.1791468],[-0.7625623,45.1792583]]]]}},{"type":"Feature","properties":{"fid":189,"NOM":"roca_4","surface":null,"cépage":"CS","Gamme":"FL","id_parcelle":"roca_4"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7780505,45.1756483],[-0.7784735,45.1749706],[-0.7793218,45.175281],[-0.778878,45.1759632],[-0.7780505,45.1756483]]]]}},{"type":"Feature","properties":{"fid":190,"NOM":"saint_anne_6","surface":null,"cépage":"Plantation","Gamme":null,"id_parcelle":"saint_anne_6"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7834095,45.1696891],[-0.7828146,45.1705475],[-0.7828146,45.1705475],[-0.7819924,45.1699728],[-0.7819924,45.1699728],[-0.7823633,45.1695571],[-0.7834095,45.1696891]]]]}},{"type":"Feature","properties":{"fid":191,"NOM":"saint_anne_6","surface":null,"cépage":"Plantation","Gamme":null,"id_parcelle":"saint_anne_6"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-0.7828146,45.1705475],[-0.7824298,45.1710828],[-0.7815436,45.1704967],[-0.7819924,45.1699728],[-0.7828146,45.1705475]]]]}}]};
+const CATEGORIES = [{"id": "Manquants", "name": "Manquants", "color": "#111827"}, {"id": "Complants", "name": "Complants", "color": "#15803d"}, {"id": "Manchots", "name": "Manchots", "color": "#f97316"}, {"id": "Manchots_avec_pampres", "name": "Manchots avec pampres", "color": "#84cc16"}, {"id": "Peu_productif", "name": "Peu productif", "color": "#eab308"}, {"id": "Improductif", "name": "Improductif", "color": "#6b7280"}, {"id": "Esca", "name": "Esca", "color": "#dc2626"}, {"id": "Eutypiose", "name": "Eutypiose", "color": "#7c3aed"}, {"id": "Court_noue", "name": "Court-noué", "color": "#2563eb"}, {"id": "Cepages_differents", "name": "Cépages différents", "color": "#0891b2"}];
+const STORAGE_KEY = "comptage_vigne_gps_observations_v1";
+const DRAFT_KEY = "comptage_vigne_gps_draft_v1";
+
+let map, allParcelsLayer, selectedParcelLayer, observationsLayer, gpsMarker;
+let selectedFeature = null;
+let lastGps = null;
+let gpsWatchId = null;
+let observations = loadObservations();
+let counts = Object.fromEntries(CATEGORIES.map(c => [c.id, 0]));
+
+function init() {
+  populateParcelles();
+  buildCounters();
+  initMap();
+  loadDraft();
+  updateSelectedParcel();
+  recomputeCounts();
+  renderObservations();
+  bindInputs();
+}
+
+function populateParcelles() {
+  const select = document.getElementById("parcelle");
+  const features = PARCELLAIRE.features
+    .filter(f => f.properties && f.properties.NOM)
+    .sort((a,b) => String(a.properties.NOM).localeCompare(String(b.properties.NOM), "fr"));
+  select.innerHTML = features.map(f => {
+    const n = f.properties.NOM;
+    const surf = f.properties.surface != null ? " — " + f.properties.surface + " ha" : "";
+    return `<option value="${escapeAttr(n)}">${escapeHtml(n)}${escapeHtml(surf)}</option>`;
+  }).join("");
+}
+
+function buildCounters() {
+  const checks = document.getElementById("checks");
+  const counters = document.getElementById("counters");
+  checks.innerHTML = CATEGORIES.map(c => `
+    <label class="check-item">
+      <input type="checkbox" checked onchange="toggleCounter('${c.id}', this.checked)">
+      <span><span class="dot" style="background:${c.color}"></span> ${escapeHtml(c.name)}</span>
+    </label>
+  `).join("");
+
+  counters.innerHTML = CATEGORIES.map(c => `
+    <div class="counter active" id="counter_${c.id}">
+      <div class="counter-title"><span class="dot" style="background:${c.color}"></span>${escapeHtml(c.name)}</div>
+      <div class="counter-row">
+        <button class="minus" type="button" onclick="minusObservation('${c.id}')">−</button>
+        <div class="value" id="value_${c.id}">0</div>
+        <button class="plus" type="button" onclick="addObservation('${c.id}')">+</button>
+      </div>
+    </div>
+  `).join("");
+}
+
+function initMap() {
+  map = L.map("map", { zoomControl: true });
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 21,
+    attribution: "&copy; OpenStreetMap"
+  }).addTo(map);
+
+  allParcelsLayer = L.geoJSON(PARCELLAIRE, {
+    style: { color:"#6b7280", weight:1, fillColor:"#9ca3af", fillOpacity:0.08 },
+    onEachFeature: (feature, layer) => {
+      layer.bindPopup(`<strong>${escapeHtml(feature.properties.NOM || "")}</strong><br>Surface : ${escapeHtml(feature.properties.surface ?? "")} ha`);
+    }
+  }).addTo(map);
+
+  selectedParcelLayer = L.geoJSON(null, {
+    style: { color:"#1d4ed8", weight:3, fillColor:"#60a5fa", fillOpacity:0.18 }
+  }).addTo(map);
+
+  observationsLayer = L.layerGroup().addTo(map);
+}
+
+function bindInputs() {
+  ["parcelle","rang","operateur","commentaire"].forEach(id => {
+    const el = document.getElementById(id);
+    el.addEventListener(id === "parcelle" ? "change" : "input", () => {
+      if (id === "parcelle") updateSelectedParcel();
+      saveDraft();
+      recomputeCounts();
+      renderObservations();
+    });
+  });
+  window.addEventListener("pagehide", saveDraft);
+}
+
+function updateSelectedParcel() {
+  const name = document.getElementById("parcelle").value;
+  selectedFeature = PARCELLAIRE.features.find(f => f.properties && f.properties.NOM === name) || null;
+  selectedParcelLayer.clearLayers();
+  if (selectedFeature) {
+    selectedParcelLayer.addData(selectedFeature);
+    centerOnSelectedParcel();
+  }
+}
+
+function centerOnSelectedParcel() {
+  if (!selectedFeature) return;
+  const tmp = L.geoJSON(selectedFeature);
+  map.fitBounds(tmp.getBounds(), { padding:[20,20] });
+}
+
+function startGpsWatch() {
+  if (!navigator.geolocation) {
+    setGpsStatus("La géolocalisation n'est pas disponible sur ce navigateur.", "err");
+    return;
+  }
+  setGpsStatus("Recherche GPS en cours…", "warn");
+  if (gpsWatchId !== null) navigator.geolocation.clearWatch(gpsWatchId);
+  gpsWatchId = navigator.geolocation.watchPosition(pos => {
+    lastGps = {
+      lon: pos.coords.longitude,
+      lat: pos.coords.latitude,
+      accuracy: Math.round(pos.coords.accuracy),
+      timestamp: new Date().toISOString()
+    };
+    setGpsStatus(`GPS OK — précision ±${lastGps.accuracy} m — ${new Date().toLocaleTimeString("fr-FR")}`, lastGps.accuracy <= 15 ? "ok" : "warn");
+    updateGpsMarker();
+  }, err => {
+    setGpsStatus("Erreur GPS : " + err.message, "err");
+  }, {
+    enableHighAccuracy: true,
+    maximumAge: 5000,
+    timeout: 10000
+  });
+}
+
+function updateGpsMarker() {
+  if (!lastGps) return;
+  const latlng = [lastGps.lat, lastGps.lon];
+  if (!gpsMarker) {
+    gpsMarker = L.circleMarker(latlng, { radius:7, color:"#111827", fillColor:"#22c55e", fillOpacity:0.9, weight:2 }).addTo(map);
+  } else {
+    gpsMarker.setLatLng(latlng);
+  }
+  gpsMarker.bindPopup(`Position téléphone<br>Précision ±${lastGps.accuracy} m`);
+}
+
+function setGpsStatus(msg, type) {
+  const el = document.getElementById("gpsStatus");
+  el.textContent = msg;
+  el.className = "status " + type;
+}
+
+function getCurrentGps() {
+  return new Promise(resolve => {
+    const now = Date.now();
+    if (lastGps && (now - Date.parse(lastGps.timestamp)) < 12000) {
+      resolve({ ok:true, gps:lastGps, source:"lastGps" });
+      return;
+    }
+    if (!navigator.geolocation) {
+      resolve({ ok:false, error:"GPS non disponible" });
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(pos => {
+      const gps = {
+        lon: pos.coords.longitude,
+        lat: pos.coords.latitude,
+        accuracy: Math.round(pos.coords.accuracy),
+        timestamp: new Date().toISOString()
+      };
+      lastGps = gps;
+      updateGpsMarker();
+      setGpsStatus(`GPS OK — précision ±${gps.accuracy} m`, gps.accuracy <= 15 ? "ok" : "warn");
+      resolve({ ok:true, gps, source:"instant" });
+    }, err => {
+      resolve({ ok:false, error:err.message });
+    }, {
+      enableHighAccuracy: true,
+      maximumAge: 5000,
+      timeout: 7000
+    });
+  });
+}
+
+async function addObservation(catId) {
+  const cat = CATEGORIES.find(c => c.id === catId);
+  if (!cat || !selectedFeature) return;
+  const now = getNowParts();
+  const gpsResult = await getCurrentGps();
+
+  let rawPoint, rawLat = "", rawLon = "", accuracy = "", gpsStatus = "ok";
+  if (gpsResult.ok) {
+    rawLon = gpsResult.gps.lon;
+    rawLat = gpsResult.gps.lat;
+    accuracy = gpsResult.gps.accuracy;
+    rawPoint = turf.point([rawLon, rawLat]);
+  } else {
+    gpsStatus = "erreur";
+    rawPoint = turf.centroid(selectedFeature);
+    rawLon = rawPoint.geometry.coordinates[0];
+    rawLat = rawPoint.geometry.coordinates[1];
+    accuracy = "";
+    setGpsStatus("GPS indisponible : point placé au centre de la parcelle.", "err");
+  }
+
+  const forced = forcePointIntoSelectedParcel(rawPoint, selectedFeature);
+  const p = forced.point.geometry.coordinates;
+  const obs = {
+    id: now.timestamp + "_" + Math.random().toString(16).slice(2),
+    timestamp: now.timestamp,
+    Date: now.dateISO,
+    Heure: now.heure,
+    Parcelle_selectionnee: document.getElementById("parcelle").value,
+    Rang_ou_secteur: document.getElementById("rang").value,
+    Operateur: document.getElementById("operateur").value,
+    Categorie: cat.name,
+    Categorie_id: cat.id,
+    Latitude_GPS_brute: rawLat,
+    Longitude_GPS_brute: rawLon,
+    Latitude_corrigee: p[1],
+    Longitude_corrigee: p[0],
+    Precision_GPS_m: accuracy,
+    Correction_appliquee: forced.corrected ? "oui" : "non",
+    Distance_correction_m: Math.round(forced.distance_m || 0),
+    Statut_GPS: gpsStatus,
+    Commentaire: document.getElementById("commentaire").value
+  };
+
+  observations.push(obs);
+  saveObservations();
+  recomputeCounts();
+  renderObservations();
+  addObservationMarker(obs, true);
+
+  if (forced.corrected && forced.distance_m > 50) {
+    setGpsStatus(`Point forcé dans la parcelle, mais GPS éloigné d’environ ${Math.round(forced.distance_m)} m. Vérifie la parcelle sélectionnée.`, "warn");
+  }
+}
+
+function forcePointIntoSelectedParcel(point, feature) {
+  try {
+    if (turf.booleanPointInPolygon(point, feature, { ignoreBoundary:false })) {
+      return { point, corrected:false, distance_m:0 };
+    }
+    const line = turf.polygonToLine(feature);
+    const nearest = turf.nearestPointOnLine(line, point, { units:"meters" });
+    let correctedPoint = nearest;
+    const centroid = turf.centroid(feature);
+    // Petit décalage vers le centroïde pour éviter que le point reste techniquement hors polygone.
+    const nc = nearest.geometry.coordinates;
+    const cc = centroid.geometry.coordinates;
+    const nudged = [nc[0] + (cc[0] - nc[0]) * 0.0005, nc[1] + (cc[1] - nc[1]) * 0.0005];
+    const nudgedPoint = turf.point(nudged);
+    if (turf.booleanPointInPolygon(nudgedPoint, feature, { ignoreBoundary:false })) correctedPoint = nudgedPoint;
+    return { point: correctedPoint, corrected:true, distance_m: turf.distance(point, correctedPoint, { units:"meters" }) };
+  } catch(e) {
+    console.warn(e);
+    const c = turf.centroid(feature);
+    return { point:c, corrected:true, distance_m:0 };
+  }
+}
+
+function minusObservation(catId) {
+  const parcelle = document.getElementById("parcelle").value;
+  for (let i = observations.length - 1; i >= 0; i--) {
+    if (observations[i].Parcelle_selectionnee === parcelle && observations[i].Categorie_id === catId) {
+      observations.splice(i, 1);
+      saveObservations();
+      recomputeCounts();
+      renderObservations();
+      return;
+    }
+  }
+  alert("Aucun point à supprimer pour cette catégorie sur la parcelle sélectionnée.");
+}
+
+function deleteLastObservation() {
+  if (observations.length === 0) return alert("Aucune observation.");
+  const last = observations[observations.length - 1];
+  if (!confirm("Supprimer le dernier point : " + last.Categorie + " / " + last.Parcelle_selectionnee + " ?")) return;
+  observations.pop();
+  saveObservations();
+  recomputeCounts();
+  renderObservations();
+}
+
+function clearAllObservations() {
+  if (observations.length === 0) return alert("Aucune observation.");
+  if (!confirm("Effacer définitivement tous les points enregistrés sur cet appareil ?")) return;
+  observations = [];
+  saveObservations();
+  recomputeCounts();
+  renderObservations();
+}
+
+function recomputeCounts() {
+  const parcelle = document.getElementById("parcelle").value;
+  counts = Object.fromEntries(CATEGORIES.map(c => [c.id, 0]));
+  observations.filter(o => o.Parcelle_selectionnee === parcelle).forEach(o => {
+    if (counts[o.Categorie_id] != null) counts[o.Categorie_id] += 1;
+  });
+  CATEGORIES.forEach(c => {
+    const el = document.getElementById("value_" + c.id);
+    if (el) el.textContent = counts[c.id] || 0;
+  });
+}
+
+function renderObservations() {
+  observationsLayer.clearLayers();
+  observations.forEach(o => addObservationMarker(o, false));
+
+  const summary = document.getElementById("savedSummary");
+  const list = document.getElementById("savedList");
+  const parcelle = document.getElementById("parcelle").value;
+  const obsParcelle = observations.filter(o => o.Parcelle_selectionnee === parcelle);
+  summary.textContent = `${observations.length} point(s) au total — ${obsParcelle.length} sur la parcelle sélectionnée.`;
+
+  const recent = observations.slice(-14).reverse();
+  list.innerHTML = recent.map(o => `
+    <div class="saved-item">
+      <strong>${escapeHtml(o.Categorie)}</strong> — ${escapeHtml(o.Parcelle_selectionnee)}<br>
+      ${escapeHtml(o.Date)} ${escapeHtml(o.Heure)} — ${escapeHtml(o.Rang_ou_secteur || "sans rang/secteur")}<br>
+      GPS ±${escapeHtml(o.Precision_GPS_m || "NA")} m — correction : ${escapeHtml(o.Correction_appliquee)}
+    </div>
+  `).join("");
+}
+
+function addObservationMarker(o, pan) {
+  const cat = CATEGORIES.find(c => c.id === o.Categorie_id) || CATEGORIES[0];
+  const marker = L.circleMarker([Number(o.Latitude_corrigee), Number(o.Longitude_corrigee)], {
+    radius: 7,
+    color: "#111827",
+    weight: 1,
+    fillColor: cat.color,
+    fillOpacity: 0.9
+  });
+  marker.bindPopup(`
+    <strong>${escapeHtml(o.Categorie)}</strong><br>
+    Parcelle : ${escapeHtml(o.Parcelle_selectionnee)}<br>
+    Rang/secteur : ${escapeHtml(o.Rang_ou_secteur || "")}<br>
+    GPS ±${escapeHtml(o.Precision_GPS_m || "NA")} m<br>
+    Correction : ${escapeHtml(o.Correction_appliquee)} (${escapeHtml(o.Distance_correction_m)} m)
+  `);
+  observationsLayer.addLayer(marker);
+  if (pan) map.panTo(marker.getLatLng());
+}
+
+function toggleCounter(id, visible) {
+  const el = document.getElementById("counter_" + id);
+  if (!el) return;
+  el.style.display = visible ? "block" : "none";
+}
+
+function showAllCounters() {
+  document.querySelectorAll(".check-item input").forEach(cb => cb.checked = true);
+  CATEGORIES.forEach(c => toggleCounter(c.id, true));
+}
+
+function exportCSV() {
+  if (observations.length === 0) return alert("Aucune observation à exporter.");
+  const headers = ["Date","Heure","timestamp","Parcelle_selectionnee","Rang_ou_secteur","Operateur","Categorie","Latitude_GPS_brute","Longitude_GPS_brute","Latitude_corrigee","Longitude_corrigee","Precision_GPS_m","Correction_appliquee","Distance_correction_m","Statut_GPS","Commentaire"];
+  const rows = observations.map(o => headers.map(h => o[h] ?? ""));
+  downloadText("comptage_vigne_points_" + today() + ".csv", toCSV(headers, rows), "text/csv;charset=utf-8;");
+}
+
+function exportSummaryCSV() {
+  if (observations.length === 0) return alert("Aucune observation à exporter.");
+  const byKey = {};
+  observations.forEach(o => {
+    const key = o.Parcelle_selectionnee + "||" + (o.Rang_ou_secteur || "");
+    if (!byKey[key]) {
+      byKey[key] = { Parcelle:o.Parcelle_selectionnee, Rang_ou_secteur:o.Rang_ou_secteur || "" };
+      CATEGORIES.forEach(c => byKey[key][c.name] = 0);
+    }
+    byKey[key][o.Categorie] = (byKey[key][o.Categorie] || 0) + 1;
+  });
+  const headers = ["Parcelle","Rang_ou_secteur", ...CATEGORIES.map(c => c.name), "Total"];
+  const rows = Object.values(byKey).map(r => {
+    const total = CATEGORIES.reduce((s,c) => s + Number(r[c.name] || 0), 0);
+    return [r.Parcelle, r.Rang_ou_secteur, ...CATEGORIES.map(c => r[c.name] || 0), total];
+  });
+  downloadText("comptage_vigne_synthese_" + today() + ".csv", toCSV(headers, rows), "text/csv;charset=utf-8;");
+}
+
+function exportGeoJSON() {
+  if (observations.length === 0) return alert("Aucune observation à exporter.");
+  const fc = {
+    type:"FeatureCollection",
+    name:"observations_comptage_vigne",
+    crs: { type:"name", properties:{ name:"EPSG:4326" } },
+    features: observations.map(o => ({
+      type:"Feature",
+      properties: { ...o },
+      geometry: { type:"Point", coordinates:[Number(o.Longitude_corrigee), Number(o.Latitude_corrigee)] }
+    }))
+  };
+  downloadText("comptage_vigne_points_" + today() + ".geojson", JSON.stringify(fc, null, 2), "application/geo+json;charset=utf-8;");
+}
+
+function toCSV(headers, rows) {
+  const csv = headers.map(csvEscape).join(";") + "\n" + rows.map(row => row.map(csvEscape).join(";")).join("\n") + "\n";
+  return "\ufeff" + csv;
+}
+
+function csvEscape(v) {
+  const s = String(v ?? "");
+  return '"' + s.replace(/"/g, '""') + '"';
+}
+
+function downloadText(filename, content, type) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function loadObservations() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); }
+  catch(e) { return []; }
+}
+
+function saveObservations() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(observations));
+  saveDraft();
+}
+
+function saveDraft() {
+  const draft = {
+    parcelle: document.getElementById("parcelle")?.value || "",
+    rang: document.getElementById("rang")?.value || "",
+    operateur: document.getElementById("operateur")?.value || "",
+    commentaire: document.getElementById("commentaire")?.value || "",
+    savedAt: new Date().toISOString()
+  };
+  localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+}
+
+function loadDraft() {
+  try {
+    const draft = JSON.parse(localStorage.getItem(DRAFT_KEY) || "null");
+    if (!draft) return;
+    if (draft.parcelle && [...document.getElementById("parcelle").options].some(o => o.value === draft.parcelle)) {
+      document.getElementById("parcelle").value = draft.parcelle;
+    }
+    document.getElementById("rang").value = draft.rang || "";
+    document.getElementById("operateur").value = draft.operateur || "";
+    document.getElementById("commentaire").value = draft.commentaire || "";
+  } catch(e) {}
+}
+
+function getNowParts() {
+  const now = new Date();
+  return {
+    dateISO: now.toISOString().slice(0,10),
+    heure: now.toTimeString().slice(0,8),
+    timestamp: now.toISOString()
+  };
+}
+
+function today() {
+  return new Date().toISOString().slice(0,10);
+}
+
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function escapeAttr(s) {
+  return escapeHtml(s).replace(/`/g, "&#096;");
+}
+
+init();
+</script>
+</body>
+</html>
